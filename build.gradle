@@ -84,6 +84,23 @@ tasks.register('check') { group = E; description = 'Check both projects';    dep
 tasks.register('test')  { group = E; description = 'Unit-test both projects'; dependsOn 'analyticsTest', 'sidecarTest' }
 tasks.register('dist')  { group = E; description = 'Build distributions for both projects'; dependsOn 'analyticsDist', 'sidecarDist' }
 
+// ---- buildAll --------------------------------------------------------------
+// Gradle ignores the order tasks are listed on the command line and orders purely by
+// the dependency graph, so `dependsOn` alone would let `jar` run BEFORE the dep
+// scripts — the child builds then fail looking for dtest jars that do not exist yet.
+// The mustRunAfter edges below pin the sequence. They are ordering-only: they never
+// pull a task into the graph, so a plain `./gradlew jar` still skips the (slow,
+// network-bound) dep scripts.
+tasks.named('sidecarDeps')  { mustRunAfter 'analyticsDeps' }
+tasks.named('analyticsJar') { mustRunAfter 'analyticsDeps', 'sidecarDeps' }
+tasks.named('sidecarJar')   { mustRunAfter 'analyticsDeps', 'sidecarDeps' }
+
+tasks.register('buildAll') {
+    group = E
+    description = 'analyticsDeps -> sidecarDeps -> jar (dtest jar deps for both projects, then assemble both)'
+    dependsOn 'analyticsDeps', 'sidecarDeps', 'jar'
+}
+
 // ---- lock-step version (ported from the old Makefile) ----------------------
 // Both projects are stamped with the SAME version (CEP-63 §4). A release that changes
 // only one project still bumps the other — note that in the release notes.

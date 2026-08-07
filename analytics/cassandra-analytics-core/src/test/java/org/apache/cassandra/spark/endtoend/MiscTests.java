@@ -469,8 +469,18 @@ public class MiscTests
                                        assertThat(row.get(2) instanceof Long).isTrue();
                                    }
                                    assertThat(skippedRawBytes.get()).isGreaterThanOrEqualTo(50_000_000);
-                                   assertThat(skippedInputStreamBytes.get()).isGreaterThanOrEqualTo(2_500_000);
-                                   assertThat(skippedRangeBytes.get()).isGreaterThanOrEqualTo(5_000_000);
+                                   // How a skip splits across these two counters is decided by how far the
+                                   // async prefetcher happened to have run ahead when skip() was called:
+                                   // BufferingInputStream.skip() drains whatever is already buffered and
+                                   // range-skips only the remainder. So neither counter can carry its own
+                                   // floor without flaking - a contended runner shifts bytes from buffered
+                                   // into range, an idle one does the reverse. Assert the total, which is
+                                   // what "the excluded blobs were skipped rather than read" actually means,
+                                   // and require range-skipping to have engaged at all since avoiding those
+                                   // network reads is the optimization on trial.
+                                   assertThat(skippedInputStreamBytes.get() + skippedRangeBytes.get())
+                                           .isGreaterThanOrEqualTo(7_500_000);
+                                   assertThat(skippedRangeBytes.get()).isPositive();
                                })
                                .withReset(MiscTests::resetStats)
                                .run(bridge.getVersion())

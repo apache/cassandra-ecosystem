@@ -18,13 +18,15 @@
 # Analytics CI for the merged cassandra-ecosystem repo.
 #
 # This workflow ALWAYS triggers, but the heavy jobs only run when analytics/**
-# (or this workflow) changed — detected by the `changes` job. The `analytics-gate`
-# job always runs and is the ONLY context that branch protection should require.
-# Rationale: a workflow gated purely by `on.<event>.paths` is skipped wholesale on
-# unrelated PRs, leaving a required check stuck at "Expected — waiting for status"
-# and blocking merge. Running always + skipping heavy jobs internally keeps the
-# required gate reporting while still spending compute only on the changed project.
-# (See re-actors/alls-green + dorny/paths-filter.)
+# (or this workflow) changed — detected by the `changes` job. Running always +
+# skipping heavy jobs internally (rather than gating via `on.<event>.paths`, which
+# skips the workflow wholesale) keeps every job's status visible on the PR while
+# still spending compute only on the changed project.
+#
+# There is deliberately NO aggregator "gate" job and NO required status check, which
+# matches upstream cassandra-analytics and cassandra-sidecar: neither declared any
+# required contexts in .asf.yaml. Merge readiness is a committer judgement call made
+# by reading the checks list, not a programmatic forcing function.
 #
 # All build/test commands are the analytics repo's originals, unchanged, run via
 # `defaults.run.working-directory: analytics`. Only non-`run` action paths (artifact
@@ -56,7 +58,10 @@ jobs:
       analytics: ${{ steps.filter.outputs.analytics }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dorny/paths-filter@v3
+      # Third-party actions must be pinned to a SHA on the ASF allowlist
+      # (apache/infrastructure-actions/approved_patterns.yml); a bare tag like @v3
+      # matches no allowlist entry and makes the job fail at startup with no logs.
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
@@ -104,7 +109,12 @@ jobs:
 
           ./scripts/build-dependencies.sh
 
-          ./gradlew --no-daemon --max-workers=2 codeCheckTasks
+          # `rat` is listed explicitly: codeCheckTasks only aggregates the subprojects'
+          # Checkstyle tasks (its dependsOn(withType(RatTask)) sits inside subprojects {},
+          # where no RatTask exists — :rat is a root-project task). It must run in a job
+          # that has a checkout, because :buildIgnoreRatList shells out to `git clean -dxn`
+          # to build the exclude list for generated files.
+          ./gradlew --no-daemon --max-workers=2 codeCheckTasks rat
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -163,7 +173,8 @@ jobs:
 
           ./scripts/build-dependencies.sh
 
-          ./gradlew codeCheckTasks
+          # See the JDK11 build for why `rat` is listed explicitly.
+          ./gradlew codeCheckTasks rat
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -183,6 +194,10 @@ jobs:
     needs: [changes, build-jdk11, build-jdk17]
     if: ${{ needs.changes.outputs.analytics == 'true' }}
     runs-on: ubuntu-latest
+    # No checks: write. action-junit-report runs with annotate_only, which never touches
+    # the check-runs API — see the "Publish test report" steps for why.
+    permissions:
+      contents: read
     strategy:
       matrix:
         include:
@@ -213,6 +228,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.jdk }}
+      # No checkout: analytics/ is materialized by the workspace cache restore below.
+      # This step is host setup only, so it must NOT inherit working-directory: analytics
+      # (that dir does not exist yet and bash would fail to cd into it).
       - run: |
           sudo bash -c 'for i in {2..20}; do echo 127.0.0.${i} localhost${i} >> /etc/hosts; done'
           for i in {2..20}
@@ -220,6 +238,7 @@ jobs:
             sudo ip addr add "127.0.0.${i}" dev lo
             sudo route add -host "127.0.0.${i}" dev lo;
           done
+        working-directory: .
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -231,6 +250,9 @@ jobs:
         with:
           path: analytics
           key: analytics-build-jdk${{ matrix.jdk }}-${{ github.sha }}
+          # Without the cache there is no source tree at all; fail with that message
+          # rather than a confusing "./gradlew: no such file" 20 lines later.
+          fail-on-cache-miss: true
       - run: |
           export SPARK_VERSION="${{ matrix.spark }}"
           export SCALA_VERSION="${{ matrix.scala }}"
@@ -242,7 +264,11 @@ jobs:
             export CASSANDRA_USE_JDK11=true
           fi
 
-          ./gradlew --stacktrace clean assemble check -x cassandra-analytics-integration-tests:test -Dcassandra.analytics.bridges.sstable_format=${{ matrix.sstable-format }}
+          # -x rat: this job has no checkout, so :buildIgnoreRatList's `git clean -dxn`
+          # fails and rat then audits generated files (cassandra-analytics-build.properties,
+          # scripts/dependency-reduced-pom.xml) that git would have excluded. The build
+          # jobs run :rat against a real checkout instead.
+          ./gradlew --stacktrace clean assemble check -x rat -x cassandra-analytics-integration-tests:test -Dcassandra.analytics.bridges.sstable_format=${{ matrix.sstable-format }}
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
@@ -252,6 +278,33 @@ jobs:
             analytics/build/test-results/**
             analytics/build/reports/tests/**
           retention-days: 30
+      # Renders the JUnit XML as a pass/fail table in the job summary and annotates
+      # failing tests inline. Without this, GitHub only shows job-level red/green and
+      # the results are only readable by downloading the artifact above.
+      # check_name must be unique per matrix leg or the legs overwrite each other's
+      # check run. fail_on_failure is left at its default (false): gradle has already
+      # failed the job, and re-failing here would mask its exit status.
+      #
+      # annotate_only skips the check-runs API and emits ::error log commands instead.
+      # On a PR from a fork the GITHUB_TOKEN is read-only no matter what `permissions:`
+      # says, so creating a check run 403s — which is how this step used to fail on
+      # every contributor PR. Log-command annotations need no token at all.
+      # skip_success_summary keeps green legs out of the run summary so the aggregate
+      # in the test-report job stays readable.
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'analytics/build/test-results/**/*.xml'
+          check_name: 'Unit tests s${{ matrix.scala }}-${{ matrix.sstable-format }}-C${{ matrix.cassandra }}-Spark${{ matrix.spark }}-JDK${{ matrix.jdk }}'
+          detailed_summary: true
+          include_time_in_summary: true
+          # Some legs legitimately run zero tests (see the C4.0 exclusions below), so a
+          # missing/empty report must not fail the job — the totals in the table make
+          # "nothing ran" visible without turning it into a hard error.
+          require_tests: false
+          annotate_only: true
+          skip_success_summary: true
 
   integration-test:
     name: Integration test - ${{ matrix.config }} (${{ matrix.job_index }})
@@ -260,6 +313,10 @@ jobs:
     needs: [changes, build-jdk11, build-jdk17]
     if: ${{ needs.changes.outputs.analytics == 'true' }}
     runs-on: ubuntu-latest
+    # No checks: write. action-junit-report runs with annotate_only, which never touches
+    # the check-runs API — see the "Publish test report" steps for why.
+    permissions:
+      contents: read
     strategy:
       # GitHub Actions generate a cross-product of 'config' × 'job_index' (4 × 5 = 20 jobs).
       # The 'include' entries don't add new combinations — they augment existing ones
@@ -298,6 +355,9 @@ jobs:
         with:
           distribution: 'temurin'
           java-version: ${{ matrix.jdk }}
+      # No checkout: analytics/ is materialized by the workspace cache restore below.
+      # This step is host setup only, so it must NOT inherit working-directory: analytics
+      # (that dir does not exist yet and bash would fail to cd into it).
       - run: |
           sudo bash -c 'for i in {2..20}; do echo 127.0.0.${i} localhost${i} >> /etc/hosts; done'
           for i in {2..20}
@@ -305,6 +365,7 @@ jobs:
             sudo ip addr add "127.0.0.${i}" dev lo
             sudo route add -host "127.0.0.${i}" dev lo;
           done
+        working-directory: .
       - name: Cache Maven repository
         uses: actions/cache@v4
         with:
@@ -316,6 +377,9 @@ jobs:
         with:
           path: analytics
           key: analytics-build-jdk${{ matrix.jdk }}-${{ github.sha }}
+          # Without the cache there is no source tree at all; fail with that message
+          # rather than a confusing "./gradlew: no such file" 20 lines later.
+          fail-on-cache-miss: true
       - run: |
           export SPARK_VERSION="${{ matrix.spark }}"
           export SCALA_VERSION="${{ matrix.scala }}"
@@ -372,21 +436,68 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: integration-tests-${{ matrix.config }}-${{ matrix.job_index }}
+          name: integration-test-results-${{ matrix.config }}-${{ matrix.job_index }}
           path: analytics/test-reports/
           retention-days: 30
-
-  # Always-runs aggregator. This is the ONLY analytics context to mark required in
-  # branch protection. allowed-skips lets the heavy jobs be skipped (unrelated PR)
-  # without stalling the required check; a job that RUNS and fails still fails the gate.
-  analytics-gate:
-    name: Analytics CI Gate
-    if: always()
-    needs: [changes, build-jdk11, build-jdk17, unit-test, integration-test]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Decide gate
-        uses: re-actors/alls-green@release/v1
+      # MUST read the test-reports/ copies, not gradle's build/test-results/. The shard
+      # loop invokes gradle once per test class, and gradle deletes a test task's output
+      # dir before re-running it, so build/test-results/ holds only the LAST class of the
+      # shard — a leg that failed on class 6 of 11 reported "2 tests, 2 passed" from
+      # class 11 and looked green. The per-class copies do not double-count for the same
+      # reason: each `find` after a gradle run sees only that run's XML.
+      # See the unit-test job for why check_name is per-leg and require_tests is false.
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
         with:
-          jobs: ${{ toJSON(needs) }}
-          allowed-skips: build-jdk11,build-jdk17,unit-test,integration-test
+          report_paths: 'analytics/test-reports/**/*.xml'
+          check_name: 'Integration tests ${{ matrix.config }} (${{ matrix.job_index }})'
+          detailed_summary: true
+          include_time_in_summary: true
+          require_tests: false
+          annotate_only: true
+          skip_success_summary: true
+
+  # Single top-level failure dashboard for the whole run: one table listing every
+  # failing suite:test with a one-line failure detail, instead of 24 job summaries and
+  # a wall of PASSED log lines to click through.
+  #
+  # This is a job summary, not a check run — job summaries are written to a local file
+  # ($GITHUB_STEP_SUMMARY) and so render identically on fork PRs, where GITHUB_TOKEN is
+  # read-only and the check-runs API is unavailable.
+  #
+  # This is NOT a merge gate: it must never be a required status check (see the header
+  # comment). fail_on_failure stays at its default (false) so this job goes green even
+  # when it is reporting failures — the individual test jobs are what turn the run red.
+  test-report:
+    name: Test report
+    needs: [changes, unit-test, integration-test]
+    # always() so the report is produced when the test jobs fail — which is the only
+    # time anyone reads it. Still gated on the changes filter: with analytics untouched
+    # the test jobs are skipped and there are no artifacts to aggregate.
+    if: ${{ always() && needs.changes.outputs.analytics == 'true' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      # Matches unit-test-results-* and integration-test-results-*. No merge-multiple:
+      # every leg's XML would land in one flat dir and same-named files (TEST-<class>.xml
+      # for a class sharded across configs) would clobber each other.
+      - name: Download all test results
+        uses: actions/download-artifact@v4
+        with:
+          pattern: '*results*'
+          path: test-results
+      - name: Aggregate test report
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'test-results/**/*.xml'
+          detailed_summary: true
+          include_time_in_summary: true
+          # A leg that died before writing any XML leaves nothing to aggregate; the run
+          # is already red from that job, so do not compound it with a second failure.
+          require_tests: false
+          annotate_only: true
+          # Unlike the per-leg steps this one always renders: on a fully green run the
+          # totals row is the "5000 passed, 0 failed" confirmation.
+          skip_success_summary: false

@@ -18,10 +18,10 @@
 
 # Sidecar CI for the merged cassandra-ecosystem repo.
 #
-# Same pattern as analytics-ci.yml: the workflow ALWAYS triggers, heavy jobs run
-# only when sidecar/** (or this file) changed (the `changes` job), and `sidecar-gate`
-# always runs and is the ONLY context branch protection should require. See the header
-# of analytics-ci.yml for the full rationale (path-filtered required checks stall PRs).
+# Same pattern as analytics-ci.yml: the workflow ALWAYS triggers and heavy jobs run
+# only when sidecar/** (or this file) changed (the `changes` job). There is deliberately
+# no aggregator "gate" job and no required status check — see the analytics-ci.yml
+# header. Merge readiness is a committer judgement call.
 #
 # Commands are the sidecar repo's originals, unchanged, run via
 # `defaults.run.working-directory: sidecar`. Because `working-directory` does NOT apply
@@ -36,6 +36,10 @@ on:
     branches: [trunk]
   push:
     branches: [trunk]
+  # Parity with analytics-ci.yml. GitHub silently drops workflow events on occasion and
+  # never replays them; a branch in this repo can then be re-run by hand instead of
+  # waiting for the next push. (Does not help a fork PR — see below.)
+  workflow_dispatch:
 
 # Cancel in-progress runs for PRs when new commits are pushed
 concurrency:
@@ -59,7 +63,9 @@ jobs:
       sidecar: ${{ steps.filter.outputs.sidecar }}
     steps:
       - uses: actions/checkout@v5
-      - uses: dorny/paths-filter@v3
+      # Pinned to an ASF-allowlisted SHA; a bare tag matches no allowlist entry and
+      # makes the job fail at startup with no logs. See analytics-ci.yml.
+      - uses: dorny/paths-filter@7b450fff21473bca461d4b92ce414b9d0420d706 # v4.0.2
         id: filter
         with:
           filters: |
@@ -183,7 +189,8 @@ jobs:
     if: ${{ needs.changes.outputs.sidecar == 'true' }}
     permissions:
       contents: read
-      checks: write
+      # No checks: write — action-junit-report runs with annotate_only and never touches
+      # the check-runs API. See the "Publish test report" steps for why.
     strategy:
       fail-fast: false
       matrix:
@@ -223,6 +230,28 @@ jobs:
             sidecar/build/reports/tests/**
           retention-days: 30
 
+      # Renders the JUnit XML as a pass/fail table in the job summary and annotates
+      # failing tests inline. check_name must be unique per matrix leg or the legs
+      # overwrite each other's check run. fail_on_failure stays at its default (false)
+      # so gradle's exit status remains the thing that fails the job.
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'sidecar/build/test-results/**/*.xml'
+          check_name: 'Unit tests (Java ${{ matrix.java }})'
+          detailed_summary: true
+          include_time_in_summary: true
+          require_tests: false
+          # annotate_only skips the check-runs API and emits ::error log commands instead.
+          # On a PR from a fork the GITHUB_TOKEN is read-only regardless of what
+          # `permissions:` says, so creating a check run 403s — which is how this step
+          # used to fail on every contributor PR. Log annotations need no token.
+          annotate_only: true
+          # Green legs contribute nothing to the run summary, keeping the aggregate table
+          # in the test-report job readable.
+          skip_success_summary: true
+
       - name: Upload static analysis reports
         if: always()
         uses: actions/upload-artifact@v5
@@ -242,7 +271,8 @@ jobs:
     if: ${{ needs.changes.outputs.sidecar == 'true' }}
     permissions:
       contents: read
-      checks: write
+      # No checks: write — action-junit-report runs with annotate_only and never touches
+      # the check-runs API. See the "Publish test report" steps for why.
     strategy:
       fail-fast: false
       matrix:
@@ -321,6 +351,24 @@ jobs:
             sidecar/build/reports/tests/**
           retention-days: 30
 
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'sidecar/build/test-results/**/*.xml'
+          check_name: 'Integration lightweight (Java ${{ matrix.java }}, C* ${{ matrix.cassandra }})'
+          detailed_summary: true
+          include_time_in_summary: true
+          require_tests: false
+          # annotate_only skips the check-runs API and emits ::error log commands instead.
+          # On a PR from a fork the GITHUB_TOKEN is read-only regardless of what
+          # `permissions:` says, so creating a check run 403s — which is how this step
+          # used to fail on every contributor PR. Log annotations need no token.
+          annotate_only: true
+          # Green legs contribute nothing to the run summary, keeping the aggregate table
+          # in the test-report job readable.
+          skip_success_summary: true
+
   # Run heavyweight integration tests on full matrix
   integration-tests-heavyweight:
     name: Integration tests heavyweight (Java ${{ matrix.java }}, C* ${{ matrix.cassandra }})
@@ -329,7 +377,8 @@ jobs:
     if: ${{ needs.changes.outputs.sidecar == 'true' }}
     permissions:
       contents: read
-      checks: write
+      # No checks: write — action-junit-report runs with annotate_only and never touches
+      # the check-runs API. See the "Publish test report" steps for why.
     strategy:
       fail-fast: false
       matrix:
@@ -416,6 +465,24 @@ jobs:
             sidecar/build/reports/tests/**
           retention-days: 30
 
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'sidecar/build/test-results/**/*.xml'
+          check_name: 'Integration heavyweight (Java ${{ matrix.java }}, C* ${{ matrix.cassandra }})'
+          detailed_summary: true
+          include_time_in_summary: true
+          require_tests: false
+          # annotate_only skips the check-runs API and emits ::error log commands instead.
+          # On a PR from a fork the GITHUB_TOKEN is read-only regardless of what
+          # `permissions:` says, so creating a check run 403s — which is how this step
+          # used to fail on every contributor PR. Log annotations need no token.
+          annotate_only: true
+          # Green legs contribute nothing to the run summary, keeping the aggregate table
+          # in the test-report job readable.
+          skip_success_summary: true
+
   # Run Java 8 client unit tests for client compatibility
   unit-tests-java8:
     name: Unit tests (Java 8 - Client only)
@@ -424,7 +491,8 @@ jobs:
     if: ${{ needs.changes.outputs.sidecar == 'true' }}
     permissions:
       contents: read
-      checks: write
+      # No checks: write — action-junit-report runs with annotate_only and never touches
+      # the check-runs API. See the "Publish test report" steps for why.
 
     steps:
       - name: Checkout repository
@@ -451,6 +519,24 @@ jobs:
             sidecar/build/test-results/**
             sidecar/build/reports/tests/**
           retention-days: 30
+
+      - name: Publish test report
+        if: always()
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'sidecar/build/test-results/**/*.xml'
+          check_name: 'Unit tests (Java 8 - Client only)'
+          detailed_summary: true
+          include_time_in_summary: true
+          require_tests: false
+          # annotate_only skips the check-runs API and emits ::error log commands instead.
+          # On a PR from a fork the GITHUB_TOKEN is read-only regardless of what
+          # `permissions:` says, so creating a check run 403s — which is how this step
+          # used to fail on every contributor PR. Log annotations need no token.
+          annotate_only: true
+          # Green legs contribute nothing to the run summary, keeping the aggregate table
+          # in the test-report job readable.
+          skip_success_summary: true
 
   # Build and verify Debian package
   deb-build-install:
@@ -637,27 +723,50 @@ jobs:
           test -f docs/build/user.html
           test -f docs/build/development.html
 
-  # Always-runs aggregator. This is the ONLY sidecar context to mark required in
-  # branch protection. See analytics-ci.yml header for rationale.
-  sidecar-gate:
-    name: Sidecar CI Gate
-    if: always()
-    needs:
-      - changes
-      - build-dtest-jars
-      - checkstyle
-      - unit-tests
-      - integration-tests-lightweight
-      - integration-tests-heavyweight
-      - unit-tests-java8
-      - deb-build-install
-      - rpm-build-install
-      - docker-build
-      - docs-build
+  # Single top-level failure dashboard for the whole run: one table listing every failing
+  # suite:test with a one-line failure detail, instead of one job summary per matrix leg
+  # and a wall of PASSED log lines to click through.
+  #
+  # This is a job summary, not a check run — job summaries are written to a local file
+  # ($GITHUB_STEP_SUMMARY) and so render identically on fork PRs, where GITHUB_TOKEN is
+  # read-only and the check-runs API is unavailable.
+  #
+  # This is NOT a merge gate and must never be a required status check. fail_on_failure
+  # stays at its default (false) so this job goes green even when it is reporting
+  # failures — the individual test jobs are what turn the run red.
+  test-report:
+    name: Test report
     runs-on: ubuntu-latest
+    needs: [changes, unit-tests, unit-tests-java8, integration-tests-lightweight, integration-tests-heavyweight]
+    # always() so the report is produced when the test jobs fail — which is the only time
+    # anyone reads it. Still gated on the changes filter: with sidecar untouched the test
+    # jobs are skipped and there are no artifacts to aggregate.
+    if: ${{ always() && needs.changes.outputs.sidecar == 'true' }}
+    permissions:
+      contents: read
+
     steps:
-      - name: Decide gate
-        uses: re-actors/alls-green@release/v1
+      # Matches unit-test-results-* and integration-{light,heavy}weight-results-*, and
+      # not the checkstyle-reports / static-analysis-reports-* artifacts. No
+      # merge-multiple: every leg's XML would land in one flat dir and same-named files
+      # (TEST-<class>.xml, produced by every java × cassandra leg) would clobber each
+      # other.
+      - name: Download all test results
+        uses: actions/download-artifact@v5
         with:
-          jobs: ${{ toJSON(needs) }}
-          allowed-skips: build-dtest-jars,checkstyle,unit-tests,integration-tests-lightweight,integration-tests-heavyweight,unit-tests-java8,deb-build-install,rpm-build-install,docker-build,docs-build
+          pattern: '*results*'
+          path: test-results
+
+      - name: Aggregate test report
+        uses: mikepenz/action-junit-report@v5
+        with:
+          report_paths: 'test-results/**/*.xml'
+          detailed_summary: true
+          include_time_in_summary: true
+          # A leg that died before writing any XML leaves nothing to aggregate; the run is
+          # already red from that job, so do not compound it with a second failure.
+          require_tests: false
+          annotate_only: true
+          # Unlike the per-leg steps this one always renders: on a fully green run the
+          # totals row is the "N passed, 0 failed" confirmation.
+          skip_success_summary: false

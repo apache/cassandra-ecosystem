@@ -45,8 +45,7 @@ github:
     - CASSANDRASC
     - CASSANDRA
 
-  # Converge on rulesets (analytics' mechanism) and carry sidecar's strict
-  # required-status-checks semantics.
+  # Converge on rulesets (analytics' mechanism).
   rulesets:
     - name: "Default Branch Protection"
       type: branch
@@ -59,18 +58,20 @@ github:
       bypass_teams:
         - root
       restrict_deletion: true
-      # The ONLY required contexts are the always-running aggregator gate jobs from
-      # .github/workflows/{analytics,sidecar}-ci.yml — never the path-skippable heavy
-      # jobs. This is what lets a single-project PR merge while a real failure still
-      # blocks (see the workflow headers). CircleCI is intentionally NOT required
-      # (cost-control approval gate; supplementary coverage).
-      # NOTE: confirm the exact ASF ruleset key + context strings with INFRA when the
-      # repo is provisioned.
-      required_status_checks:
-        strict: true
-        checks:
-          - "Analytics CI Gate"
-          - "Sidecar CI Gate"
+      # No required_status_checks, matching upstream cassandra-analytics (which declared
+      # none) and cassandra-sidecar (which set only strict: true with no contexts).
+      # Merge readiness is a committer judgement call made by reading the checks list on
+      # the PR — there is deliberately no programmatic forcing function.
+      #
+      # If required contexts are ever wanted: do NOT list the per-project heavy jobs.
+      # They are path-skipped on single-project PRs, and a skipped required context sits
+      # at "Expected — waiting for status" forever. That needs an always-running
+      # aggregator job, which is what was removed here.
+      #
+      # The "Test report" job in each CI workflow is NOT that aggregator. It only renders
+      # the failing-test dashboard into the run summary, and it carries the same
+      # path-skip condition as the test jobs, so making it required would hang exactly
+      # as described above.
 
 notifications:
   commits:      commits@cassandra.apache.org

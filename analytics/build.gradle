@@ -257,6 +257,15 @@ subprojects {
     reports {
       junitXml.outputLocation.set(rootProject.file("build/test-results/${project.name}/${testTask.name}"))
       html.outputLocation.set(rootProject.file("build/reports/tests/${project.name}/${testTask.name}"))
+      // These tests boot in-JVM Cassandra clusters and Spark, so a single test class can
+      // emit megabytes of stdout. Gradle inlines all of it into <system-out>/<system-err>,
+      // which made build/test-results/ hundreds of MB and OOM'd the 4 GB node heap of the
+      // `Publish test report` step (action-junit-report parses every XML into memory).
+      // Only the XML loses the streams: the console log and the HTML report below are both
+      // driven by the binary results and still carry full output, and <failure> stack
+      // traces live outside these elements.
+      junitXml.includeSystemOutLog = false
+      junitXml.includeSystemErrLog = false
     }
     testLogging {
       events "started", "passed", "skipped", "failed"

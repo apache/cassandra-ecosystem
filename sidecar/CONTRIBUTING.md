@@ -18,6 +18,9 @@
 #
 -->
 
+# Testing
+Making a small modification under sidecar/ to exercise auto CI detection.
+
 # Contributing to Apache Cassandra Sidecar
 
 We warmly welcome and appreciate contributions from the community.
