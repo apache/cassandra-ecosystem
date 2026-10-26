@@ -121,6 +121,35 @@ class RestoreJobDatabaseAccessorIntTest extends IntegrationTestBase
     }
 
     @CassandraIntegrationTest
+    void testFastForwardEnabledRoundTrips()
+    {
+        waitForSchemaReady(30, TimeUnit.SECONDS);
+
+        RestoreJobDatabaseAccessor accessor = injector.getInstance(RestoreJobDatabaseAccessor.class);
+        UUID jobId = UUIDs.timeBased();
+        CreateRestoreJobRequestPayload payload = CreateRestoreJobRequestPayload.builder(secrets, expiresAtMillis)
+                                                                               .jobId(jobId)
+                                                                               .jobAgent("agent")
+                                                                               .consistencyLevel(ConsistencyLevel.QUORUM)
+                                                                               .fastForwardEnabled(true)
+                                                                               .build();
+        accessor.create(payload, qualifiedTableName);
+
+        RestoreJob found = accessor.find(jobId);
+        assertThat(found).isNotNull();
+        assertThat(found.fastForwardEnabled).isTrue();
+
+        // the flag is preserved when other fields of the job are updated
+        UpdateRestoreJobRequestPayload markStaged
+        = new UpdateRestoreJobRequestPayload(null, null, RestoreJobStatus.STAGED, null, null);
+        accessor.update(markStaged, found);
+        assertThat(accessor.find(jobId).fastForwardEnabled).isTrue();
+
+        // and it is disabled by default
+        assertThat(accessor.find(createJob(accessor)).fastForwardEnabled).isFalse();
+    }
+
+    @CassandraIntegrationTest
     void testStaticCredentialTypeRoundTrips()
     {
         waitForSchemaReady(30, TimeUnit.SECONDS);
@@ -136,6 +165,28 @@ class RestoreJobDatabaseAccessorIntTest extends IntegrationTestBase
         RestoreJob found = accessor.find(jobId);
         assertThat(found).isNotNull();
         assertThat(found.credentialType).isEqualTo(CredentialType.STATIC);
+    }
+
+    @CassandraIntegrationTest
+    void testRemoveSecrets()
+    {
+        waitForSchemaReady(30, TimeUnit.SECONDS);
+
+        RestoreJobDatabaseAccessor accessor = injector.getInstance(RestoreJobDatabaseAccessor.class);
+        UUID jobId = createJob(accessor);
+        assertThat(accessor.find(jobId).secrets).isEqualTo(secrets);
+
+        accessor.removeSecrets(jobId);
+        RestoreJob found = accessor.find(jobId);
+        assertThat(found.secrets).isNull();
+        // non-sensitive metadata is preserved for auditing
+        assertThat(found.status).isEqualTo(RestoreJobStatus.CREATED);
+        assertThat(found.credentialType).isEqualTo(CredentialType.STATIC);
+        assertThat(found.jobAgent).isEqualTo("agent");
+
+        // idempotent
+        accessor.removeSecrets(jobId);
+        assertThat(accessor.find(jobId).secrets).isNull();
     }
 
     private UUID createJob(RestoreJobDatabaseAccessor accessor)
