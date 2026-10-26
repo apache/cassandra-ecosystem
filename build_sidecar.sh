@@ -16,7 +16,13 @@ echo "JAVA_HOME=$JAVA_HOME"
 cd "$SCRIPT_DIR/sidecar"
 
 # Build jars/artifacts only — no unit tests, no checkstyle/spotbugs.
-# dtest jars are TEST-only, so a jar build doesn't need them; run
-# ./scripts/build-dtest-jars.sh separately if you want to run integration tests.
+# assemble still compiles test-common's test fixtures against one in-jvm dtest jar
+# (Cassandra 4.1), so build that one first (network; the script re-clones Cassandra but
+# skips the build when the jar exists). The JDK 8 client-only build doesn't include
+# test-common. Run ./scripts/build-dtest-jars.sh without BRANCHES for the full set that
+# integration tests need.
 # (Use `./gradlew build` or the CI workflow to run the full test suite.)
+if [ "$JDK_VERSION" != "8" ]; then
+  BRANCHES="${BRANCHES:-cassandra-4.1}" ./scripts/build-dtest-jars.sh
+fi
 ./gradlew assemble

@@ -14,9 +14,12 @@ SCALA_VERSION="${SCALA_VERSION:-2.12}"
 export JAVA_HOME="$(/usr/libexec/java_home -v "$JDK_VERSION")"
 export JDK_VERSION SPARK_VERSION SCALA_VERSION
 
-# JDK 17 targets Cassandra 5.0 only; skip the 4.0/4.1 dtest jar builds.
+# JDK 17 targets Cassandra 5.0+; skip the 4.0/4.1 dtest jar builds.
+# Cassandra 6.0 needs JDK 17 or later, so JDK 11 skips its dtest jar build.
 if [ "$JDK_VERSION" = "17" ]; then
-  export BRANCHES="${BRANCHES:-cassandra-5.0}"
+  export BRANCHES="${BRANCHES:-cassandra-5.0 cassandra-6.0}"
+else
+  export BRANCHES="${BRANCHES:-cassandra-4.0 cassandra-4.1 cassandra-5.0}"
 fi
 
 echo "Building analytics: JDK $JDK_VERSION, Spark $SPARK_VERSION, Scala $SCALA_VERSION"

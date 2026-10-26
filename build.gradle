@@ -24,14 +24,56 @@
 // every task below just shells into the relevant child wrapper. It is pure syntactic
 // sugar; nothing inside either build changes. See CEP-63 Phase 1 / README.md.
 //
-// Toolchain env (JDK_VERSION / SPARK_VERSION / SCALA_VERSION / JAVA_HOME) is inherited
-// by the child process, so `SPARK_VERSION=4 ./gradlew analyticsJar` works as expected.
-// The mac convenience scripts build_analytics.sh / build_sidecar.sh still own JDK
-// auto-selection; the *Deps tasks reuse the children's own scripts/ presteps.
+// Each child runs on the JDK it needs, whatever JDK launched the root build. The JDK is
+// found by Gradle toolchain detection (`./gradlew javaToolchains` lists what it sees) and
+// handed to the child as JAVA_HOME:
+//   analytics: JDK_VERSION if set, else analyticsJDKLevel from analytics/gradle.properties
+//              (the same rule analytics/build.gradle checks the running JDK against).
+//   sidecar:   11, the server's baseline and the JDK its 4.x dtest jars build with;
+//              -PsidecarJdkVersion=17 overrides it.
+// SPARK_VERSION / SCALA_VERSION / JDK_VERSION are still inherited by the child, so
+// `SPARK_VERSION=3 SCALA_VERSION=2.12 JDK_VERSION=11 ./gradlew analyticsJar` works as
+// expected. The mac convenience scripts build_analytics.sh / build_sidecar.sh pick their
+// own JDK; the *Deps tasks reuse the children's own scripts/ presteps.
+
+plugins {
+    // Only the javaToolchains service: no source sets and no lifecycle tasks, which would
+    // clash with the clean / check / test tasks registered below.
+    id 'jvm-toolchains'
+}
 
 def gradlewFor(String subdir) {
     // Windows would need gradlew.bat; the repo ships only the POSIX wrapper today.
     return './gradlew'
+}
+
+def jdkVersionFor(String subdir) {
+    if (subdir == 'sidecar') {
+        return findProperty('sidecarJdkVersion') ?: '11'
+    }
+    if (System.getenv('JDK_VERSION')) {
+        return System.getenv('JDK_VERSION')
+    }
+    def props = new Properties()
+    file('analytics/gradle.properties').withInputStream { props.load(it) }
+    def level = props.getProperty('analyticsJDKLevel')
+    if (!level) {
+        throw new GradleException('analytics/gradle.properties does not set analyticsJDKLevel')
+    }
+    return level
+}
+
+// Run the task's child process on its project's JDK. The JDK is looked up only when the
+// task executes, so listing or configuring tasks never requires it to be installed.
+def runOnJdk(Exec task, String subdir) {
+    def version = jdkVersionFor(subdir)
+    def launcher = javaToolchains.launcherFor { languageVersion = JavaLanguageVersion.of(version) }
+    task.doFirst {
+        def javaHome = launcher.get().metadata.installationPath.asFile.absolutePath
+        logger.lifecycle("${subdir}/: JDK ${version} at ${javaHome}")
+        task.environment('JAVA_HOME', javaHome)
+        task.environment('PATH', "${javaHome}/bin${File.pathSeparator}${System.getenv('PATH')}")
+    }
 }
 
 // Register an Exec task that runs a child gradlew with the given args.
@@ -41,17 +83,67 @@ def proxy(String name, String taskGroup, String subdir, List<String> args) {
         it.description = "${subdir}/: ${gradlewFor(subdir)} ${args.join(' ')}"
         it.workingDir = file(subdir)
         it.commandLine([gradlewFor(subdir), '--no-daemon'] + args)
+        runOnJdk(it, subdir)
     }
 }
 
 // Register an Exec task that runs an arbitrary child script (e.g. dep presteps).
-def script(String name, String taskGroup, String subdir, String scriptPath, String desc) {
+def script(String name, String taskGroup, String subdir, String scriptPath, String desc,
+           Map<String, String> env = [:]) {
     tasks.register(name, Exec) {
         it.group = taskGroup
         it.description = desc
         it.workingDir = file(subdir)
         it.commandLine(scriptPath)
+        it.environment(env)
+        runOnJdk(it, subdir)
     }
+}
+
+// Register an Exec task that builds only the dtest jar a child's assemble compiles against:
+// the DTEST_JAR default in buildFile (DTEST_JAR still overrides, as in the child), found
+// in CASSANDRA_DEP_DIR or the child's own depDir. It is skipped when that jar exists,
+// because the scripts re-clone Cassandra before they check, and the full *Deps set of
+// branches takes far longer to build.
+def jarDtest(String name, String taskGroup, String subdir, String buildFile, String depDir,
+             String scriptPath, Map<String, String> env = [:]) {
+    tasks.register(name, Exec) {
+        def source = file("${subdir}/${buildFile}")
+        def matcher = source.text =~ /getenv\("DTEST_JAR"\)\s*\?:\s*"([^"]+)"/
+        if (!matcher.find()) {
+            throw new GradleException("No DTEST_JAR default found in ${source}")
+        }
+        def jarName = System.getenv('DTEST_JAR') ?: matcher.group(1)
+        def version = jarName =~ /^dtest-(\d+\.\d+)/
+        if (!version.find()) {
+            throw new GradleException("Cannot tell the Cassandra branch of dtest jar ${jarName}")
+        }
+        def jar = file(subdir).toPath().resolve(System.getenv('CASSANDRA_DEP_DIR') ?: depDir)
+                .resolve(jarName).toFile()
+        it.group = taskGroup
+        it.description = "${subdir}/: build only ${jarName}, which assemble compiles against (skipped when present)"
+        it.workingDir = file(subdir)
+        it.commandLine(scriptPath)
+        it.environment(env + [BRANCHES: "cassandra-${version.group(1)}".toString()])
+        it.onlyIf { !jar.exists() }
+        it.doLast {
+            if (!jar.exists()) {
+                throw new GradleException("${subdir}/${scriptPath} did not produce ${jar}")
+            }
+        }
+        runOnJdk(it, subdir)
+    }
+}
+
+// analytics' dtest script builds with whatever JDK it runs on: Cassandra 4.x needs JDK 11
+// (with CASSANDRA_USE_JDK11) and 6.0 needs 17+, so default BRANCHES to the set that JDK can
+// build, as CI and build_analytics.sh do. An explicit BRANCHES still wins.
+def analyticsDtestEnv() {
+    if (jdkVersionFor('analytics') == '11') {
+        return [CASSANDRA_USE_JDK11: 'true',
+                BRANCHES: System.getenv('BRANCHES') ?: 'cassandra-4.0 cassandra-4.1 cassandra-5.0']
+    }
+    return [BRANCHES: System.getenv('BRANCHES') ?: 'cassandra-5.0 cassandra-6.0']
 }
 
 // ---- analytics -------------------------------------------------------------
@@ -63,7 +155,11 @@ proxy('analyticsTest',            A, 'analytics', ['test'])
 proxy('analyticsIntegrationTest', A, 'analytics', [':cassandra-analytics-integration-tests:test'])
 proxy('analyticsDist',            A, 'analytics', ['distTar', 'distZip'])
 script('analyticsDeps',           A, 'analytics', './scripts/build-dependencies.sh',
-        'analytics/: build dtest-jar dependencies (network; run before integration tests)')
+        'analytics/: build dtest-jar dependencies (network; run before integration tests)',
+        analyticsDtestEnv())
+jarDtest('analyticsJarDeps',      A, 'analytics', 'cassandra-analytics-integration-framework/build.gradle',
+        'dependencies', './scripts/build-dependencies.sh', analyticsDtestEnv())
+tasks.named('analyticsJar') { dependsOn 'analyticsJarDeps' }
 
 // ---- sidecar ---------------------------------------------------------------
 def S = 'sidecar'
@@ -75,6 +171,9 @@ proxy('sidecarIntegrationTest',   S, 'sidecar', [':integration-tests:integration
 proxy('sidecarDist',              S, 'sidecar', ['distTar', 'distZip'])
 script('sidecarDeps',             S, 'sidecar', './scripts/build-dtest-jars.sh',
         'sidecar/: build dtest jars (network; run before integration tests)')
+jarDtest('sidecarJarDeps',        S, 'sidecar', 'test-common/build.gradle',
+        'dtest-jars', './scripts/build-dtest-jars.sh')
+tasks.named('sidecarJar') { dependsOn 'sidecarJarDeps' }
 
 // ---- combined (both projects) ----------------------------------------------
 def E = 'ecosystem'
