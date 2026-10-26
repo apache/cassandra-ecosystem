@@ -19,6 +19,7 @@
 
 package org.apache.cassandra.cdc;
 
+import java.nio.ByteBuffer;
 import java.util.List;
 import java.util.function.Function;
 import java.util.stream.Collectors;
@@ -27,6 +28,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import org.apache.cassandra.cdc.api.KeyspaceTypeKey;
+import org.apache.cassandra.cdc.avro.JavaTypeConverter;
 import org.apache.cassandra.cdc.msg.CdcEvent;
 import org.apache.cassandra.cdc.msg.Value;
 import org.apache.cassandra.spark.data.CqlField;
@@ -155,10 +157,17 @@ public enum CdcLogMode implements CdcLogger
 
     private static String columnToString(Value fieldValue)
     {
+        ByteBuffer value = fieldValue.getValue();
+        if (value == null)
+        {
+            // null value means the column is deleted; not a deserialization failure
+            return String.format("[%s : null]", fieldValue.columnName);
+        }
+
         try
         {
             CqlField.CqlType type = typeLookup.apply(KeyspaceTypeKey.of(fieldValue.keyspace, fieldValue.columnType));
-            Object javaValue = type.deserializeToJavaType(fieldValue.getValue());
+            Object javaValue = JavaTypeConverter.deserialize(type, value);
             return String.format("[%s : %s]", fieldValue.columnName, javaValue);
         }
         catch (Throwable t)
