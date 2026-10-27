@@ -19,18 +19,18 @@ package org.apache.cassandra.sidecar.testing;
 
 import com.google.inject.Provider;
 import io.vertx.core.Vertx;
+import org.apache.cassandra.bridge.CassandraBridge;
 import org.apache.cassandra.cdc.api.CdcOptions;
 import org.apache.cassandra.cdc.api.EventConsumer;
 import org.apache.cassandra.cdc.api.SchemaSupplier;
 import org.apache.cassandra.cdc.kafka.KafkaProducerFactory;
 import org.apache.cassandra.cdc.sidecar.ClusterConfigProvider;
 import org.apache.cassandra.cdc.sidecar.SidecarCdcClient;
+import org.apache.cassandra.cdc.sidecar.SidecarCdcStats;
 import org.apache.cassandra.cdc.stats.ICdcStats;
-import org.apache.cassandra.sidecar.bridge.CassandraBridgeFactory;
 import org.apache.cassandra.sidecar.cdc.CachingSchemaStore;
 import org.apache.cassandra.sidecar.cdc.CdcConfig;
 import org.apache.cassandra.sidecar.cdc.CdcPublisher;
-import org.apache.cassandra.sidecar.cdc.SidecarCdcStats;
 import org.apache.cassandra.sidecar.concurrent.ExecutorPools;
 import org.apache.cassandra.sidecar.coordination.RangeManager;
 import org.apache.cassandra.sidecar.db.CdcDatabaseAccessor;
@@ -61,14 +61,14 @@ public class TestCdcPublisher extends CdcPublisher
                             CdcSystemViewsDatabaseAccessor cdcSystemViews,
                             SidecarCdcStats sidecarCdcStats,
                             Provider<RangeManager> rangeManagerProvider,
-                            CassandraBridgeFactory cassandraBridgeFactory,
+                            Provider<CassandraBridge> cassandraBridgeProvider,
                             Provider<SidecarCdcClient> sidecarCdcClientProvider,
                             CdcOptions cdcOptions)
     {
         super(vertx, executorPools, clusterConfigProvider,
               schemaSupplier, instanceMetadataFetcher, conf, databaseAccessor, cdcStats,
               cdcSystemViews, sidecarCdcStats, rangeManagerProvider,
-              cassandraBridgeFactory, sidecarCdcClientProvider,
+              cassandraBridgeProvider, sidecarCdcClientProvider,
               mock(CachingSchemaStore.class),
               mock(KafkaProducerFactory.class),
               cdcOptions);

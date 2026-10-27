@@ -51,6 +51,9 @@ import org.apache.cassandra.io.util.DataInputBuffer;
 import org.apache.cassandra.io.util.FileDataInput;
 import org.apache.cassandra.io.util.RandomAccessReader;
 import org.apache.cassandra.io.util.RebufferingInputStream;
+import org.apache.cassandra.schema.Schema;
+import org.apache.cassandra.schema.TableId;
+import org.apache.cassandra.schema.TableMetadata;
 import org.apache.cassandra.spark.exceptions.TransportFailureException;
 import org.apache.cassandra.spark.utils.AsyncExecutor;
 import org.apache.cassandra.spark.utils.LoggerHelper;
@@ -553,20 +556,33 @@ public class BufferingCommitLogReader implements CommitLogReadHandler,
                                                        messagingVersion,
                                                        DeserializationHelper.Flag.LOCAL);
         }
-        catch (UnknownTableException ex)
-        {
-            if (ex.id == null)
-            {
-                return;
-            }
-            logger.trace("Invalid mutation", "error", ex); // we see many unknown table exception logs when we skip over mutations from other tables
-            stats.mutationsIgnoredUnknownTableCount(1);
-
-            return;
-        }
         catch (Throwable t)
         {
+            UnknownTableException unknownTable = unknownTableCause(t);
+            if (unknownTable != null)
+            {
+                if (unknownTable.id == null)
+                {
+                    return;
+                }
+                logger.trace("Invalid mutation", "error", t); // we see many unknown table exception logs when we skip over mutations from other tables
+                stats.mutationsIgnoredUnknownTableCount(1);
+
+                return;
+            }
+
+            // TODO: This could crash the process (e.g. Sidecar) to crash. We may want to handle it gracefully depending on the runtime environment.
             JVMStabilityInspector.inspectThrowable(t);
+
+            if (!failedMutationMayInvolveCdcTable(inputBuffer, size))
+            {
+                // No CDC-enabled table is involved – safe to skip and move on
+                logger.trace("Ignoring mutation that failed to deserialize; no CDC-enabled table involved", "error", t);
+                stats.mutationsDeserializeFailedNonCdcCount(1);
+
+                return;
+            }
+
             Path p = Files.createTempFile("mutation", "dat");
 
             try (DataOutputStream out = new DataOutputStream(Files.newOutputStream(p)))
@@ -602,6 +618,80 @@ public class BufferingCommitLogReader implements CommitLogReadHandler,
         stats.mutationsReadBytes(size);
 
         this.handleMutation(mutation, size, mutationPosition, desc);
+    }
+
+    /**
+     * The {@link UnknownTableException} at or beneath a deserialization failure, or null if there is none.
+     *
+     * <p>Mutations for tables this reader does not know are expected and are skipped, and until Cassandra 6.0
+     * that exception arrived unwrapped.  It no longer does:
+     * {@code PartitionUpdate.PartitionUpdateSerializer.deserialize} catches it and rethrows
+     * {@code new CoordinatorBehindException(exception.getMessage(), exception)}, which extends
+     * {@code RuntimeException} and is not an {@code UnknownTableException}.  A catch of the declared type
+     * therefore never fires against a 6.0 commit log, and the failure reaches
+     * {@link #handleUnrecoverableError} instead, which calls {@code requestTermination()}.  The segment is then
+     * re-read for as long as it exists, so one mutation for one unknown table stops CDC for the whole cluster.
+     *
+     * <p>Measured against Cassandra 6.0-alpha2 with one table absent from the supplied schema: the reader
+     * re-read the same segment for eight minutes without publishing a record, and the {@code cdc_raw}
+     * directory grew from 76 segments to 125 while it did so.
+     *
+     * <p>Skipping is safe at this point regardless of how the failure is wrapped, because the caller has
+     * already read the mutation's bytes out of the file: {@code readSection} does {@code readFully} for the
+     * serialized size before calling this method, so the file pointer is past the mutation whether it
+     * deserialized or not.
+     */
+    private static UnknownTableException unknownTableCause(Throwable failure)
+    {
+        Throwable cause = failure;
+        while (cause != null)
+        {
+            if (cause instanceof UnknownTableException)
+            {
+                return (UnknownTableException) cause;
+            }
+            cause = cause.getCause() == cause ? null : cause.getCause();
+        }
+        return null;
+    }
+
+    /**
+     * Best-effort check for whether a mutation that failed to deserialize may involve a CDC-enabled table.
+     * When this returns false, the mutation is guaranteed not to involve any CDC-enabled table, so the failure can
+     * be safely ignored.
+     * Only reads the first {@link TableId} to make the decision, as mutations contain single partition update in most cases.
+     * If a mutation has more than one partition update, it conservatively assumes a CDC-enabled table is involved.
+     *
+     * @param inputBuffer raw byte array w/Mutation data
+     * @param size        serialized size of the mutation
+     * @return true if the first table touched by the mutation is confirmed CDC-enabled, or the mutation has more
+     *         than one {@link PartitionUpdate} (so the rest can't be safely checked); false otherwise, including
+     *         when the table's metadata can't be found, or even the first {@link TableId} can't be read
+     */
+    @VisibleForTesting
+    static boolean failedMutationMayInvolveCdcTable(byte[] inputBuffer, int size)
+    {
+        try (DataInputBuffer in = new DataInputBuffer(inputBuffer, 0, size))
+        {
+            int updateCount = (int) in.readUnsignedVInt();
+            if (updateCount > 1)
+            {
+                // Can't safely reach the remaining updates' TableIds without deserializing this update's body,
+                // conservatively assume it may involve a CDC-enabled table.
+                return true;
+            }
+            TableId tableId = TableId.deserialize(in);
+            TableMetadata metadata = Schema.instance.getTableMetadata(tableId);
+            if (metadata != null && metadata.params.cdc)
+            {
+                return true;
+            }
+        }
+        catch (Throwable t)
+        {
+            // unable to read the first TableId
+        }
+        return false;
     }
 
     public void close()
