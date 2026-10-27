@@ -1,4 +1,3 @@
-#
 # Licensed to the Apache Software Foundation (ASF) under one
 # or more contributor license agreements.  See the NOTICE file
 # distributed with this work for additional information
@@ -15,10 +14,12 @@
 # KIND, either express or implied.  See the License for the
 # specific language governing permissions and limitations
 # under the License.
-#
-# Merged .asf.yaml for cassandra-ecosystem. Reconciles the analytics and sidecar
-# .asf.yaml files per the CEP-63 working-group decisions. Only ONE .asf.yaml is read
-# by ASF infra (repo root); the copies under analytics/ and sidecar/ are inert.
+
+notifications:
+  commits:      commits@cassandra.apache.org
+  issues:       commits@cassandra.apache.org
+  pullrequests: pr@cassandra.apache.org
+  jira_options: link worklog
 
 github:
   # A neutral, purpose-stating description (CEP-63 §1 junk-drawer guardrail — the
@@ -26,12 +27,10 @@ github:
   # dev@ lazy-consensus discussion).
   description: "Apache Cassandra ecosystem: co-located companion projects (Analytics + Sidecar) for Apache Cassandra®"
   homepage: https://cassandra.apache.org/
-
   enabled_merge_buttons:
-    squash: true
-    merge:  false
-    rebase: true   # analytics allowed rebase; carried forward per decision
-
+    squash:  true
+    merge:   false
+    rebase:  false
   features:
     wiki: false
     issues: false
@@ -45,35 +44,8 @@ github:
     - CASSANDRASC
     - CASSANDRA
 
-  # Converge on rulesets (analytics' mechanism) and carry sidecar's strict
-  # required-status-checks semantics.
-  rulesets:
-    - name: "Default Branch Protection"
-      type: branch
-      branches:
-        includes:
-          - "~DEFAULT_BRANCH"
-          - "release/*"
-          - "rel/*"
-        excludes: []
-      bypass_teams:
-        - root
-      restrict_deletion: true
-      # The ONLY required contexts are the always-running aggregator gate jobs from
-      # .github/workflows/{analytics,sidecar}-ci.yml — never the path-skippable heavy
-      # jobs. This is what lets a single-project PR merge while a real failure still
-      # blocks (see the workflow headers). CircleCI is intentionally NOT required
-      # (cost-control approval gate; supplementary coverage).
-      # NOTE: confirm the exact ASF ruleset key + context strings with INFRA when the
-      # repo is provisioned.
+  protected_branches:
+    trunk:
       required_status_checks:
+        # strict means "Require branches to be up-to-date before merging", i.e. enforcing rebase for the head branch.
         strict: true
-        checks:
-          - "Analytics CI Gate"
-          - "Sidecar CI Gate"
-
-notifications:
-  commits:      commits@cassandra.apache.org
-  issues:       commits@cassandra.apache.org
-  pullrequests: pr@cassandra.apache.org   # sidecar routed PRs to pr@; carried forward
-  jira_options: link worklog
