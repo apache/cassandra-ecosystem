@@ -41,8 +41,8 @@ import org.apache.cassandra.cdc.kafka.KafkaProducerFactory;
 import org.apache.cassandra.cdc.kafka.TopicSupplier;
 import org.apache.cassandra.cdc.sidecar.ClusterConfigProvider;
 import org.apache.cassandra.cdc.sidecar.SidecarCdcClient;
+import org.apache.cassandra.cdc.sidecar.SidecarCdcStats;
 import org.apache.cassandra.cdc.stats.ICdcStats;
-import org.apache.cassandra.sidecar.bridge.CassandraBridgeFactory;
 import org.apache.cassandra.sidecar.cluster.instance.InstanceMetadata;
 import org.apache.cassandra.sidecar.common.server.ThrowingRunnable;
 import org.apache.cassandra.sidecar.concurrent.ExecutorPools;
@@ -62,13 +62,13 @@ import static org.apache.cassandra.sidecar.server.SidecarServerEvents.ON_CDC_CAC
 import static org.apache.cassandra.sidecar.server.SidecarServerEvents.ON_SERVER_STOP;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 /**
@@ -103,7 +103,7 @@ public class CdcPublisherTests
     @Mock
     private Provider<RangeManager> rangeManager;
     @Mock
-    private CassandraBridgeFactory cassandraBridgeFactory;
+    private Provider<CassandraBridge> cassandraBridgeProvider;
     @Mock
     private SidecarCdcClient sidecarCdcClient;
     @Mock
@@ -139,7 +139,7 @@ public class CdcPublisherTests
             systemViews,
             sidecarCdcStats,
             rangeManager,
-            cassandraBridgeFactory,
+            cassandraBridgeProvider,
             () -> sidecarCdcClient,
             schemaStore,
             kafkaProducerFactory,
@@ -156,6 +156,65 @@ public class CdcPublisherTests
 
         assertThat(result).isNotNull();
         assertThat(result).isInstanceOf(CdcEventConsumer.class);
+    }
+
+    /**
+     * Log-only must not require Kafka producer configuration, so the producer factory must never be
+     * reached. Asserting only the returned type would still pass if a producer were built and then
+     * discarded.
+     */
+    @Test
+    void testEventConsumerBuildsNoKafkaProducerWhenLogOnly()
+    {
+        setupVersionMocks();
+        when(cdcConfig.logOnly()).thenReturn(true);
+
+        cdcPublisher.eventConsumer(cdcConfig);
+
+        verifyNoInteractions(kafkaProducerFactory);
+    }
+
+    /**
+     * Verifies that construction captures the Cdc enabled/disabled lifecycle stat depending on
+     * {@link CdcConfig#cdcEnabled()} at the time the {@link CdcPublisher} is built, mirroring the
+     * javadoc contract on {@link SidecarCdcStats#captureCdcDisabled()}: "Cdc disabled and CdcPublisher
+     * will not be started."
+     */
+    @Test
+    void testConstructorCapturesCdcEnabledWhenConfigEnablesCdc()
+    {
+        CdcConfig enabledConfig = mock(CdcConfig.class, RETURNS_DEEP_STUBS);
+        when(enabledConfig.cdcEnabled()).thenReturn(true);
+        // setUp()'s own CdcPublisher construction already recorded a call against the shared
+        // sidecarCdcStats mock (cdcConfig defaults to cdcEnabled() == false) — use a fresh mock
+        // here so this test only observes the constructor call under test.
+        SidecarCdcStats freshSidecarCdcStats = mock(SidecarCdcStats.class);
+
+        new CdcPublisher(
+            vertx, executorPools, clusterConfigProvider, schemaSupplier, instanceMetadataFetcher,
+            enabledConfig, databaseAccessor, cdcStats, systemViews, freshSidecarCdcStats, rangeManager,
+            cassandraBridgeProvider, () -> sidecarCdcClient, schemaStore, kafkaProducerFactory, cdcOptions
+        );
+
+        verify(freshSidecarCdcStats).captureCdcEnabled();
+        verify(freshSidecarCdcStats, never()).captureCdcDisabled();
+    }
+
+    @Test
+    void testConstructorCapturesCdcDisabledWhenConfigDisablesCdc()
+    {
+        CdcConfig disabledConfig = mock(CdcConfig.class, RETURNS_DEEP_STUBS);
+        when(disabledConfig.cdcEnabled()).thenReturn(false);
+        SidecarCdcStats freshSidecarCdcStats = mock(SidecarCdcStats.class);
+
+        new CdcPublisher(
+            vertx, executorPools, clusterConfigProvider, schemaSupplier, instanceMetadataFetcher,
+            disabledConfig, databaseAccessor, cdcStats, systemViews, freshSidecarCdcStats, rangeManager,
+            cassandraBridgeProvider, () -> sidecarCdcClient, schemaStore, kafkaProducerFactory, cdcOptions
+        );
+
+        verify(freshSidecarCdcStats).captureCdcDisabled();
+        verify(freshSidecarCdcStats, never()).captureCdcEnabled();
     }
 
     /**
@@ -201,6 +260,17 @@ public class CdcPublisherTests
         when(cdcConfig.failOnRecordTooLargeError()).thenReturn(false);
         when(cdcConfig.failOnKafkaError()).thenReturn(true);
 
+        setupVersionMocks();
+        when(kafkaProducerFactory.create(any())).thenReturn(mock(KafkaProducer.class));
+    }
+
+    /**
+     * Stubs only the chain {@link CdcPublisher#eventConsumer} walks to resolve the Cassandra
+     * version. Kept separate from {@link #setupMocks} so that the log-only case can assert the
+     * Kafka producer factory was never touched, without a stubbing on it to explain away.
+     */
+    private void setupVersionMocks()
+    {
         InstanceMetadata mockInstance = mock(InstanceMetadata.class, RETURNS_DEEP_STUBS);
         when(mockInstance.delegate().nodeSettings().releaseVersion()).thenReturn("4.1.0");
         doAnswer(invocation -> {
@@ -210,8 +280,7 @@ public class CdcPublisherTests
 
         CassandraBridge mockBridge = mock(CassandraBridge.class);
         when(mockBridge.getVersion()).thenReturn(CassandraVersion.FOURONE);
-        when(cassandraBridgeFactory.get(anyString())).thenReturn(mockBridge);
-        when(kafkaProducerFactory.create(any())).thenReturn(mock(KafkaProducer.class));
+        when(cassandraBridgeProvider.get()).thenReturn(mockBridge);
     }
 
 

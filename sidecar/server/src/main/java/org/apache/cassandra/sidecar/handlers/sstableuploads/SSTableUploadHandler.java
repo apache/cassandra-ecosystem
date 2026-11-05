@@ -26,6 +26,7 @@ import com.datastax.driver.core.KeyspaceMetadata;
 import com.datastax.driver.core.Metadata;
 import com.google.inject.Inject;
 import com.google.inject.Singleton;
+import io.netty.handler.codec.http.HttpHeaderNames;
 import io.netty.handler.codec.http.HttpResponseStatus;
 import io.vertx.core.Future;
 import io.vertx.core.Vertx;
@@ -41,7 +42,7 @@ import org.apache.cassandra.sidecar.concurrent.ExecutorPools;
 import org.apache.cassandra.sidecar.concurrent.TaskExecutorPool;
 import org.apache.cassandra.sidecar.config.SSTableUploadConfiguration;
 import org.apache.cassandra.sidecar.config.ServiceConfiguration;
-import org.apache.cassandra.sidecar.db.DriverUnsupportedSchemaCache;
+import org.apache.cassandra.sidecar.db.SchemaCache;
 import org.apache.cassandra.sidecar.handlers.AbstractHandler;
 import org.apache.cassandra.sidecar.handlers.AccessProtected;
 import org.apache.cassandra.sidecar.handlers.data.SSTableUploadRequestParam;
@@ -72,7 +73,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
     private final SSTableUploadsPathBuilder uploadPathBuilder;
     private final ConcurrencyLimiter limiter;
     private final DigestVerifierFactory digestVerifierFactory;
-    private final DriverUnsupportedSchemaCache driverUnsupportedSchemaCache;
+    private final SchemaCache schemaCache;
 
     /**
      * Constructs a handler with the provided params.
@@ -85,7 +86,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
      * @param executorPools                executor pools for blocking executions
      * @param validator                    a validator instance to validate Cassandra-specific input
      * @param digestVerifierFactory        a factory of checksum verifiers
-     * @param driverUnsupportedSchemaCache cache of unparseable table schemas by Java driver
+     * @param schemaCache                  cache containing unparseable table schemas by Java driver
      */
     @Inject
     protected SSTableUploadHandler(Vertx vertx,
@@ -96,7 +97,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
                                    ExecutorPools executorPools,
                                    CassandraInputValidator validator,
                                    DigestVerifierFactory digestVerifierFactory,
-                                   DriverUnsupportedSchemaCache driverUnsupportedSchemaCache)
+                                   SchemaCache schemaCache)
     {
         super(metadataFetcher, executorPools, validator);
         this.fs = vertx.fileSystem();
@@ -105,7 +106,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
         this.uploadPathBuilder = uploadPathBuilder;
         this.limiter = new ConcurrencyLimiter(configuration::concurrentUploadsLimit);
         this.digestVerifierFactory = digestVerifierFactory;
-        this.driverUnsupportedSchemaCache = driverUnsupportedSchemaCache;
+        this.schemaCache = schemaCache;
     }
 
     @Override
@@ -139,6 +140,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
         {
             String message = String.format("Concurrent upload limit (%d) exceeded", limiter.limit());
             instanceMetrics.uploadSSTable().throttled.metric.update(1);
+            context.response().putHeader(HttpHeaderNames.RETRY_AFTER, String.valueOf(configuration.retryAfterSeconds()));
             context.fail(wrapHttpException(HttpResponseStatus.TOO_MANY_REQUESTS, message));
             return;
         }
@@ -207,7 +209,7 @@ public class SSTableUploadHandler extends AbstractHandler<SSTableUploadRequestPa
     {
         TaskExecutorPool pool = executorPools.service();
         return Future.all(pool.executeBlocking(() -> metadataFetcher.delegate(host).metadata()),
-                          pool.executeBlocking(() -> driverUnsupportedSchemaCache.getTableSchema(request.keyspace(), request.table(), false)))
+                          pool.executeBlocking(() -> schemaCache.getUnsupportedTableSchema(request.keyspace(), request.table(), false)))
                      .compose(compositeFuture -> {
                          Metadata metadata = compositeFuture.resultAt(0);
                          String unparseableSchema = compositeFuture.resultAt(1);

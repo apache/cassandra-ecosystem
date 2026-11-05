@@ -66,11 +66,25 @@ The root build is pure orchestration — it never couples the two builds; each t
 child project's own `./gradlew`. You can still build a project directly from its own directory
 (`cd analytics && ./gradlew build`).
 
-The analytics build profile is selected with the `SPARK_VERSION`, `SCALA_VERSION`, and
-`JDK_VERSION` environment variables (e.g. `SPARK_VERSION=4 SCALA_VERSION=2.13 JDK_VERSION=17`);
-these pass straight through to the child build. Integration tests need dtest jars first — run
-`./gradlew analyticsDeps` / `./gradlew sidecarDeps` (network) before
-`./gradlew analyticsIntegrationTest` / `sidecarIntegrationTest`.
+Each project runs on the JDK it needs, whichever JDK launched `./gradlew`: analytics on
+`JDK_VERSION` if set, otherwise its `analyticsJDKLevel` default (JDK 17), and sidecar on JDK 11
+(`-PsidecarJdkVersion=17` overrides it). Gradle finds installed JDKs through
+[toolchain detection](https://docs.gradle.org/current/userguide/toolchains.html#sec:auto_detection);
+`./gradlew javaToolchains` lists the ones it sees, and `org.gradle.java.installations.paths`
+points it at others. On macOS, a Homebrew JDK is only detected once it is linked into
+`/Library/Java/JavaVirtualMachines` (see `brew info openjdk@11`).
+
+The analytics build profile defaults to Spark 4 / Scala 2.13 / JDK 17 and is selected with the
+`SPARK_VERSION`, `SCALA_VERSION`, and `JDK_VERSION` environment variables (e.g.
+`SPARK_VERSION=3 SCALA_VERSION=2.12 JDK_VERSION=11`); these pass straight through to the child build.
+
+Both projects compile against an in-jvm dtest jar built from Cassandra sources, so
+`analyticsJar` / `sidecarJar` (and `jar`) first build the one jar each needs
+(`analyticsJarDeps` / `sidecarJarDeps`). The first run needs network access and takes a while;
+later runs skip the step while the jar exists. Integration tests need the full set — run
+`./gradlew analyticsDeps` / `./gradlew sidecarDeps` before
+`./gradlew analyticsIntegrationTest` / `sidecarIntegrationTest`. The dtest scripts add GitHub's
+SSH host key to `~/.ssh/known_hosts` (`ssh-keyscan`) before cloning.
 
 ## Versioning & releases
 

@@ -181,6 +181,7 @@ jobs:
             JDK_VERSION: "11"
             SPARK_VERSION: "3"
             SCALA_VERSION: "2.12"
+            BRANCHES: "cassandra-4.0 cassandra-4.1 cassandra-5.0"
           command: |
             ./scripts/build-dependencies.sh
             ./gradlew --no-daemon --max-workers=2 codeCheckTasks
@@ -204,7 +205,7 @@ jobs:
             JDK_VERSION: "17"
             SPARK_VERSION: "4"
             SCALA_VERSION: "2.13"
-            BRANCHES: "cassandra-5.0"
+            BRANCHES: "cassandra-5.0 cassandra-6.0"
           command: |
             ./scripts/build-dependencies.sh
             ./gradlew --no-daemon --max-workers=2 codeCheckTasks
@@ -681,6 +682,16 @@ workflows:
               jdk: ["17"]
               sstable_format: ["bti"]
               cassandra: ["5.0"]
+      - analytics-unit:
+          requires: [analytics-build-deps-jdk17]
+          matrix:
+            alias: analytics-unit-c6-spark4
+            parameters:
+              spark: ["4"]
+              scala: ["2.13"]
+              jdk: ["17"]
+              sstable_format: ["bti"]
+              cassandra: ["6.0"]
       - analytics-int-test:
           requires: [analytics-build-deps-jdk11]
           matrix:
@@ -698,7 +709,7 @@ workflows:
               spark: ["3"]
               scala: ["2.13"]
               jdk: ["11"]
-              cassandra: ["5.0.5"]
+              cassandra: ["5.0.7"]
       - analytics-int-test:
           requires: [analytics-build-deps-jdk17]
           matrix:
@@ -707,7 +718,16 @@ workflows:
               spark: ["4"]
               scala: ["2.13"]
               jdk: ["17"]
-              cassandra: ["5.0.5"]
+              cassandra: ["5.0.7"]
+      - analytics-int-test:
+          requires: [analytics-build-deps-jdk17]
+          matrix:
+            alias: analytics-int-c6-spark4
+            parameters:
+              spark: ["4"]
+              scala: ["2.13"]
+              jdk: ["17"]
+              cassandra: ["6.0-alpha2"]
 
   sidecar-build-and-test:
     when: << pipeline.parameters.run-sidecar >>

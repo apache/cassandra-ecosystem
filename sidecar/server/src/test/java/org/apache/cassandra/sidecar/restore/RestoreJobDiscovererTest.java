@@ -39,6 +39,7 @@ import io.vertx.core.Promise;
 import org.apache.cassandra.sidecar.TestModule;
 import org.apache.cassandra.sidecar.cluster.instance.InstanceMetadata;
 import org.apache.cassandra.sidecar.common.data.ConsistencyLevel;
+import org.apache.cassandra.sidecar.common.data.RestoreJobSecrets;
 import org.apache.cassandra.sidecar.common.data.RestoreJobStatus;
 import org.apache.cassandra.sidecar.common.response.NodeSettings;
 import org.apache.cassandra.sidecar.common.server.cluster.locator.TokenRange;
@@ -54,6 +55,7 @@ import org.apache.cassandra.sidecar.db.RestoreSliceTest;
 import org.apache.cassandra.sidecar.db.schema.SidecarSchema;
 import org.apache.cassandra.sidecar.exceptions.CassandraUnavailableException;
 import org.apache.cassandra.sidecar.exceptions.RestoreJobExceptions;
+import org.apache.cassandra.sidecar.foundation.RestoreJobSecretsGen;
 import org.apache.cassandra.sidecar.metrics.MetricRegistryFactory;
 import org.apache.cassandra.sidecar.metrics.SidecarMetrics;
 import org.apache.cassandra.sidecar.metrics.SidecarMetricsImpl;
@@ -79,6 +81,7 @@ import static org.mockito.Mockito.doNothing;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
@@ -275,6 +278,30 @@ class RestoreJobDiscovererTest
     }
 
     @Test
+    void testSecretsRemovedOnlyFromFinalJobsHavingSecrets()
+    {
+        when(sidecarSchema.isInitialized()).thenReturn(true);
+        Date expireAt = new Date(System.currentTimeMillis() + 10000L);
+        RestoreJobSecrets secrets = RestoreJobSecretsGen.genRestoreJobSecrets();
+        List<RestoreJob> jobs = new ArrayList<>();
+        UUID[] finalWithSecrets = { UUIDs.timeBased(), UUIDs.timeBased(), UUIDs.timeBased() };
+        jobs.add(createUpdatedJob(finalWithSecrets[0], "agent", RestoreJobStatus.SUCCEEDED, secrets, expireAt));
+        jobs.add(createUpdatedJob(finalWithSecrets[1], "agent", RestoreJobStatus.FAILED, secrets, expireAt));
+        jobs.add(createUpdatedJob(finalWithSecrets[2], "agent", RestoreJobStatus.ABORTED, secrets, expireAt));
+        // secrets are already removed
+        jobs.add(createUpdatedJob(UUIDs.timeBased(), "agent", RestoreJobStatus.SUCCEEDED, null, expireAt));
+        // not final yet; secrets are still needed
+        jobs.add(createUpdatedJob(UUIDs.timeBased(), "agent", RestoreJobStatus.CREATED, secrets, expireAt));
+        when(mockJobAccessor.findAllRecent(anyLong(), anyInt())).thenReturn(jobs);
+
+        executeBlocking();
+
+        ArgumentCaptor<UUID> removed = ArgumentCaptor.forClass(UUID.class);
+        verify(mockJobAccessor, times(3)).removeSecrets(removed.capture());
+        assertThat(removed.getAllValues()).containsExactlyInAnyOrder(finalWithSecrets);
+    }
+
+    @Test
     void testDiscoverSidecarManagedJob() throws Exception
     {
         UUID jobId = discoverSidecarManagedJob(false);
@@ -293,11 +320,87 @@ class RestoreJobDiscovererTest
         verify(mockRangeAccessor, never()).create(any());
     }
 
+    @Test
+    void testDiscoverFastForwardJobInCreatedStatus() throws Exception
+    {
+        UUID jobId = UUIDs.timeBased();
+        RestoreJob job = createTestingJob(jobId, RestoreJobStatus.CREATED, ConsistencyLevel.QUORUM)
+                         .unbuild()
+                         .fastForwardEnabled(true)
+                         .build();
+        mockSidecarManagedJobDiscovery(job);
+
+        executeBlocking();
+        verify(mockSliceAccessor, times(1)).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+        ArgumentCaptor<RestoreRange> restoreRangeCaptor = ArgumentCaptor.forClass(RestoreRange.class);
+        verify(mockRangeAccessor).create(restoreRangeCaptor.capture());
+        assertThat(restoreRangeCaptor.getValue().jobId()).isEqualTo(jobId);
+
+        executeBlocking();
+        // slices of a fast forward job are uploaded progressively, hence the discovery repeats in CREATED status
+        verify(mockSliceAccessor, times(2)).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+    }
+
+    @Test
+    void testSkipDiscoveringSlicesOfRegularJobInCreatedStatus() throws Exception
+    {
+        mockSidecarManagedJobDiscovery(createTestingJob(UUIDs.timeBased(), RestoreJobStatus.CREATED, ConsistencyLevel.QUORUM));
+
+        executeBlocking();
+
+        verify(mockSliceAccessor, never()).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+        verify(mockRangeAccessor, never()).create(any());
+    }
+
+    @Test
+    void testDiscoveringSlicesOfStageReadyJobIsNotRepeated() throws Exception
+    {
+        mockSidecarManagedJobDiscovery(createTestingJob(UUIDs.timeBased(), RestoreJobStatus.STAGE_READY, ConsistencyLevel.QUORUM));
+
+        executeBlocking();
+        executeBlocking();
+
+        // STAGE_READY guarantees that all slices are uploaded, so discovering them once is sufficient
+        verify(mockSliceAccessor, times(1)).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+    }
+
+    @Test
+    void testDiscoveringSlicesOfFastForwardJobInStagedStatusIsNotRepeated() throws Exception
+    {
+        UUID jobId = UUIDs.timeBased();
+        RestoreJob job = createTestingJob(jobId, RestoreJobStatus.STAGED, ConsistencyLevel.QUORUM)
+                         .unbuild()
+                         .fastForwardEnabled(true)
+                         .build();
+        mockSidecarManagedJobDiscovery(job);
+
+        executeBlocking();
+        // on entering STAGED, the ranges are discovered and submitted, so that the staged ones can be imported
+        verify(mockSliceAccessor, times(1)).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+
+        executeBlocking();
+        // all slices are uploaded by the time the job is STAGED, so the expensive discovery is not repeated
+        verify(mockSliceAccessor, times(1)).selectByJobByBucketByTokenRange(any(), anyShort(), any());
+    }
+
     private UUID discoverSidecarManagedJob(boolean isJobFailed) throws Exception
     {
-        when(sidecarSchema.isInitialized()).thenReturn(true);
         UUID jobId = UUIDs.timeBased();
         RestoreJob sidecarManagedJob = createTestingJob(jobId, RestoreJobStatus.STAGE_READY, ConsistencyLevel.QUORUM);
+        mockSidecarManagedJobDiscovery(sidecarManagedJob);
+        if (isJobFailed)
+        {
+            doThrow(RestoreJobExceptions.ofFatal("Job failed", mock(RestoreRange.class), null))
+            .when(mockManagers).trySubmit(any(), any(), any());
+        }
+
+        executeBlocking();
+        return jobId;
+    }
+
+    private void mockSidecarManagedJobDiscovery(RestoreJob sidecarManagedJob) throws Exception
+    {
+        when(sidecarSchema.isInitialized()).thenReturn(true);
         assertThat(sidecarManagedJob.isManagedBySidecar()).isTrue();
 
         when(mockJobAccessor.findAllRecent(anyLong(), anyInt()))
@@ -309,18 +412,7 @@ class RestoreJobDiscovererTest
         when(instanceMetadataFetcher.instance(anyInt())).thenReturn(instance);
         when(mockSliceAccessor.selectByJobByBucketByTokenRange(any(), anyShort(), any()))
         .thenReturn(Collections.singletonList(RestoreSliceTest.createTestingSlice(sidecarManagedJob, "sliceId", 0, 10)));
-        if (isJobFailed)
-        {
-            doThrow(RestoreJobExceptions.ofFatal("Job failed", mock(RestoreRange.class), null))
-            .when(mockManagers).trySubmit(any(), any(), any());
-        }
-        else
-        {
-            when(mockManagers.trySubmit(any(), any(), any())).thenReturn(RestoreJobProgressTracker.Status.CREATED);
-        }
-
-        executeBlocking();
-        return jobId;
+        when(mockManagers.trySubmit(any(), any(), any())).thenReturn(RestoreJobProgressTracker.Status.CREATED);
     }
 
     @Test
