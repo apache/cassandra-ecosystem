@@ -67,7 +67,7 @@ public class CqlField implements Serializable, Comparable<CqlField>
     {
         enum InternalType
         {
-            NativeCql, Set, List, Map, Frozen, Udt, Tuple, Vector;
+            NativeCql, Set, List, Map, Frozen, Udt, Tuple;
 
             public static InternalType fromString(String name)
             {
@@ -77,8 +77,6 @@ public class CqlField implements Serializable, Comparable<CqlField>
                         return Set;
                     case "list":
                         return List;
-                    case "vector":
-                        return Vector;
                     case "map":
                         return Map;
                     case "tuple":
@@ -236,10 +234,6 @@ public class CqlField implements Serializable, Comparable<CqlField>
     }
 
     public interface CqlList extends CqlCollection
-    {
-    }
-
-    public interface CqlVector extends CqlCollection
     {
     }
 

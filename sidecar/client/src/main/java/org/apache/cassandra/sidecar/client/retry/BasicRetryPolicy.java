@@ -126,8 +126,7 @@ public class BasicRetryPolicy extends RetryPolicy
             return;
         }
 
-        if (response.statusCode() == HttpResponseStatus.SERVICE_UNAVAILABLE.code() ||
-            response.statusCode() == HttpResponseStatus.TOO_MANY_REQUESTS.code())
+        if (response.statusCode() == HttpResponseStatus.SERVICE_UNAVAILABLE.code())
         {
             if (canRetryOnADifferentHost)
             {

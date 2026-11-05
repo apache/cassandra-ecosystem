@@ -43,6 +43,7 @@ import org.apache.cassandra.sidecar.common.server.CQLSessionProvider;
 import org.apache.cassandra.sidecar.db.schema.CdcStatesSchema;
 import org.apache.cassandra.sidecar.db.schema.SidecarSchema;
 import org.apache.cassandra.sidecar.utils.ByteBufUtils;
+import org.apache.cassandra.sidecar.utils.InstanceMetadataFetcher;
 import org.apache.cassandra.sidecar.utils.TokenSplitUtil;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.apache.cassandra.spark.utils.TableIdentifier;
@@ -61,14 +62,17 @@ public class CdcDatabaseAccessor extends DatabaseAccessor<CdcStatesSchema>
     private static final Logger LOGGER = LoggerFactory.getLogger(CdcDatabaseAccessor.class);
     private final Provider<TokenSplitUtil> tokenSplitUtilProvider;
     private volatile TokenSplitUtil tokenSplitUtil = null;
+    private final InstanceMetadataFetcher instanceMetadataFetcher;
 
     @Inject
     public CdcDatabaseAccessor(SidecarSchema sidecarSchema,
                                CQLSessionProvider sessionProvider,
-                               Provider<TokenSplitUtil> tokenSplitUtilProvider)
+                               Provider<TokenSplitUtil> tokenSplitUtilProvider,
+                               InstanceMetadataFetcher instanceMetadataFetcher)
     {
         super(sidecarSchema.tableSchema(CdcStatesSchema.class), sessionProvider);
         this.tokenSplitUtilProvider = tokenSplitUtilProvider;
+        this.instanceMetadataFetcher = instanceMetadataFetcher;
     }
 
     protected TokenSplitUtil tokenSplitUtil()

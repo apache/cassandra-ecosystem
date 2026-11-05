@@ -218,8 +218,6 @@ public class CdcRawDirectorySpaceCleaner implements PeriodicTask
                                                )
                                                .orElseGet(List::of);
         publishCdcStats(segmentFiles);
-        long maxUsageBytes = maxUsageBytes();
-        cdcMetrics.maxCdcSpaceConfigured.metric.setValue(maxUsageBytes);
         if (segmentFiles.size() < 2)
         {
             LOGGER.debug("Skipping cdc data cleaner routine cleanup: No cdc data or only one single cdc segment is found.");
@@ -227,6 +225,7 @@ public class CdcRawDirectorySpaceCleaner implements PeriodicTask
         }
 
         long directorySizeBytes = FileUtils.directorySizeBytes(cdcRawDirectory);
+        long maxUsageBytes = maxUsageBytes();
         long upperLimitBytes = (long) (maxUsageBytes * cdcConfiguration.cdcRawDirectoryMaxPercentUsage());
         // Sort the files by segmentId to delete commit log segments in write order
         // The latest file is the current active segment, but it could be created before the retention duration, e.g. slow data ingress

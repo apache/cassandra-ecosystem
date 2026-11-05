@@ -309,10 +309,7 @@ public final class TestUtils extends CommonTestUtils
     public static List<CassandraVersion> tombstoneTestableVersions()
     {
         // Tombstone SSTable writing and SSTable-to-JSON conversion are not implemented for Cassandra version 3.0
-        List<CassandraVersion> tombstoneTestableVersions = ImmutableList.of(CassandraVersion.FOURZERO,
-                                                                           CassandraVersion.FOURONE,
-                                                                           CassandraVersion.FIVEZERO,
-                                                                           CassandraVersion.SIXZERO);
+        List<CassandraVersion> tombstoneTestableVersions = ImmutableList.of(CassandraVersion.FOURZERO, CassandraVersion.FOURONE, CassandraVersion.FIVEZERO);
         return filterTestableVersions(tombstoneTestableVersions);
     }
 

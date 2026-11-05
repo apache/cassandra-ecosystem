@@ -18,13 +18,13 @@
 
 package org.apache.cassandra.sidecar.handlers.livemigration;
 
-import java.io.IOException;
-import java.net.URI;
+import java.net.URLDecoder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.FileSystems;
 import java.nio.file.Files;
-import java.nio.file.NoSuchFileException;
 import java.nio.file.Path;
 import java.nio.file.PathMatcher;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
@@ -42,17 +42,16 @@ import io.vertx.core.http.HttpServerRequest;
 import io.vertx.core.net.SocketAddress;
 import io.vertx.ext.auth.authorization.Authorization;
 import io.vertx.ext.web.RoutingContext;
+import io.vertx.ext.web.handler.HttpException;
 import org.apache.cassandra.sidecar.acl.authorization.BasicPermissions;
 import org.apache.cassandra.sidecar.cluster.instance.InstanceMetadata;
 import org.apache.cassandra.sidecar.concurrent.ExecutorPools;
 import org.apache.cassandra.sidecar.config.LiveMigrationConfiguration;
 import org.apache.cassandra.sidecar.config.SidecarConfiguration;
-import org.apache.cassandra.sidecar.exceptions.LiveMigrationExceptions.UnknownMigrationPrefixException;
 import org.apache.cassandra.sidecar.handlers.AbstractHandler;
 import org.apache.cassandra.sidecar.handlers.AccessProtected;
 import org.apache.cassandra.sidecar.handlers.FileStreamHandler;
 import org.apache.cassandra.sidecar.livemigration.LiveMigrationInstanceMetadataUtil;
-import org.apache.cassandra.sidecar.livemigration.LiveMigrationInstanceMetadataUtil.ResolvedPath;
 import org.apache.cassandra.sidecar.utils.CassandraInputValidator;
 import org.apache.cassandra.sidecar.utils.InstanceMetadataFetcher;
 import org.jetbrains.annotations.NotNull;
@@ -61,7 +60,6 @@ import org.jetbrains.annotations.Nullable;
 import static org.apache.cassandra.sidecar.common.ApiEndpointsV1.DIR_INDEX_PARAM;
 import static org.apache.cassandra.sidecar.common.ApiEndpointsV1.DIR_TYPE_PARAM;
 import static org.apache.cassandra.sidecar.livemigration.LiveMigrationPlaceholderUtil.replacePlaceholder;
-import static org.apache.cassandra.sidecar.utils.HttpExceptions.wrapHttpException;
 
 /**
  * Handler that resolves and validates file paths for live migration operations.
@@ -96,7 +94,7 @@ public class LiveMigrationFileResolveHandler extends AbstractHandler<Void> imple
         String dirType = context.pathParam(DIR_TYPE_PARAM);
         if (null == dirType || dirType.isEmpty() || null == LiveMigrationDirType.find(dirType))
         {
-            throw wrapHttpException(HttpResponseStatus.BAD_REQUEST, "Invalid directory type: " + dirType);
+            throw new HttpException(HttpResponseStatus.BAD_REQUEST.code(), "Invalid directory type: " + dirType);
         }
 
         String dirIndex = context.pathParam(DIR_INDEX_PARAM);
@@ -107,11 +105,11 @@ public class LiveMigrationFileResolveHandler extends AbstractHandler<Void> imple
         }
         catch (NumberFormatException formatException)
         {
-            throw wrapHttpException(HttpResponseStatus.BAD_REQUEST, "Invalid directoryIndex: " + dirIndex);
+            throw new HttpException(HttpResponseStatus.BAD_REQUEST.code(), "Invalid directoryIndex: " + dirIndex);
         }
         if (index < 0)
         {
-            throw wrapHttpException(HttpResponseStatus.BAD_REQUEST, "Invalid directoryIndex: " + dirIndex);
+            throw new HttpException(HttpResponseStatus.BAD_REQUEST.code(), "Invalid directoryIndex: " + dirIndex);
         }
 
         // Path params are not used further, hence returning null.
@@ -125,95 +123,65 @@ public class LiveMigrationFileResolveHandler extends AbstractHandler<Void> imple
                                   SocketAddress remoteAddress,
                                   @Nullable Void request)
     {
-        String reqPath;
-        try
-        {
-            reqPath = URI.create(rc.request().path()).getPath();
-        }
-        catch (IllegalArgumentException e)
-        {
-            rc.fail(wrapHttpException(HttpResponseStatus.BAD_REQUEST, "Malformed request path", e));
-            return;
-        }
+        String reqPath = URLDecoder.decode(rc.request().path(), StandardCharsets.UTF_8);
 
         if (reqPath.contains("/../") || reqPath.endsWith("/.."))
         {
             LOGGER.warn("Tried to access file using relative path({}). Rejecting the request.", reqPath);
-            rc.fail(wrapHttpException(HttpResponseStatus.BAD_REQUEST,
-                                      "Tried to access file using relative path: " + reqPath));
+            rc.response().setStatusCode(HttpResponseStatus.BAD_REQUEST.code()).end();
             return;
         }
 
         InstanceMetadata instanceMeta = metadataFetcher.instance(host);
         String normalizedPath = rc.normalizedPath();
+        String localFile;
 
-        ResolvedPath resolved = LiveMigrationInstanceMetadataUtil.resolveLexically(normalizedPath, instanceMeta);
-
-        // Only the filesystem-touching checks (verifyContainment, isDirectory, isExcluded) run on
-        // the worker thread; the lexical resolve above is pure string work and stays on the event
-        // loop. validate() throws HttpException on any failure, which flows through processFailure
-        // -> context.fail() so the framework's failure handler renders a JSON error response.
-        String localFile = resolved.resolvedPath().toString();
-        executorPools.service()
-                     .executeBlocking(() -> {
-                         validate(resolved, instanceMeta);
-                         return localFile;
-                     })
-                     .onSuccess(file -> {
-                         rc.put(FileStreamHandler.FILE_PATH_CONTEXT_KEY, file);
-                         rc.next();
-                     })
-                     .onFailure(cause -> processFailure(cause, rc, host, remoteAddress, request));
-    }
-
-    @Override
-    protected void processFailure(Throwable cause, RoutingContext context, String host, SocketAddress remoteAddress, Void request)
-    {
-        if (cause instanceof UnknownMigrationPrefixException)
-        {
-            context.fail(wrapHttpException(HttpResponseStatus.NOT_FOUND, cause.getMessage(), cause));
-        }
-        else
-        {
-            super.processFailure(cause, context, host, remoteAddress, request);
-        }
-    }
-
-    private void validate(ResolvedPath resolved, InstanceMetadata instanceMeta)
-    {
-        Path path = resolved.resolvedPath();
         try
         {
-            resolved.verifyContainment();
-        }
-        catch (NoSuchFileException e)
-        {
-            LOGGER.info("Requested file is not found. file={}", path);
-            throw wrapHttpException(HttpResponseStatus.NOT_FOUND, "File not found", e);
+            localFile = LiveMigrationInstanceMetadataUtil.localPath(normalizedPath, instanceMeta).toString();
         }
         catch (IllegalArgumentException e)
         {
-            throw wrapHttpException(HttpResponseStatus.FORBIDDEN, e.getMessage(), e);
-        }
-        catch (IOException e)
-        {
-            LOGGER.error("Filesystem error while resolving {}", path, e);
-            throw wrapHttpException(HttpResponseStatus.INTERNAL_SERVER_ERROR,
-                                    "Filesystem error while resolving requested path", e);
+            LOGGER.warn("Invalid path", e);
+            rc.response().setStatusCode(HttpResponseStatus.NOT_FOUND.code()).end();
+            return;
         }
 
+        Path path = Paths.get(localFile);
+
+        executorPools.service()
+                     .executeBlocking(() -> isInvalidPath(rc, path, reqPath, instanceMeta))
+                     .onSuccess(invalid -> {
+                         if (!invalid)
+                         {
+                             rc.put(FileStreamHandler.FILE_PATH_CONTEXT_KEY, localFile);
+                             rc.next();
+                         }
+                     });
+    }
+
+    private boolean isInvalidPath(RoutingContext rc, Path path, String reqPath, InstanceMetadata instanceMeta)
+    {
+        if (!Files.exists(path))
+        {
+            LOGGER.info("Requested file is not found. file={}", path);
+            rc.response().setStatusCode(HttpResponseStatus.NOT_FOUND.code()).end();
+            return true;
+        }
         if (Files.isDirectory(path))
         {
-            LOGGER.info("Cannot transfer directory. path={}", path);
-            throw wrapHttpException(HttpResponseStatus.BAD_REQUEST, "Cannot transfer directory");
+            LOGGER.info("Cannot transfer directory. path={}.", reqPath);
+            rc.response().setStatusCode(HttpResponseStatus.BAD_REQUEST.code()).end();
+            return true;
         }
         if (isExcluded(path, instanceMeta))
         {
             LOGGER.debug("Requested path or one of its parent directories is excluded from Live Migration. " +
-                         "path={}", path);
-            throw wrapHttpException(HttpResponseStatus.NOT_FOUND,
-                                    "Requested path is excluded from live migration");
+                         "path={}", reqPath);
+            rc.response().setStatusCode(HttpResponseStatus.NOT_FOUND.code()).end();
+            return true;
         }
+        return false;
     }
 
     private boolean isExcluded(Path localFile, InstanceMetadata instanceMetadata)

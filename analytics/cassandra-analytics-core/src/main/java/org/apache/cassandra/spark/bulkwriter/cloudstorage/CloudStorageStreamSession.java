@@ -23,21 +23,23 @@ import java.io.IOException;
 import java.math.BigInteger;
 import java.nio.file.Path;
 import java.util.HashSet;
+import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.ExecutorService;
+import java.util.stream.Collectors;
 
 import com.google.common.annotations.VisibleForTesting;
 import com.google.common.collect.Range;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import o.a.c.sidecar.client.shaded.client.SidecarInstance;
 import o.a.c.sidecar.client.shaded.common.request.data.CreateSliceRequestPayload;
 import o.a.c.sidecar.client.shaded.common.response.data.RestoreJobSummaryResponsePayload;
 import org.apache.cassandra.bridge.CassandraBridge;
 import org.apache.cassandra.bridge.CassandraBridgeFactory;
 import org.apache.cassandra.bridge.SSTableDescriptor;
 import org.apache.cassandra.clients.Sidecar;
+import o.a.c.sidecar.client.shaded.client.SidecarInstance;
 import org.apache.cassandra.spark.bulkwriter.BulkWriteValidator;
 import org.apache.cassandra.spark.bulkwriter.BulkWriterContext;
 import org.apache.cassandra.spark.bulkwriter.JobInfo;
@@ -49,6 +51,8 @@ import org.apache.cassandra.spark.bulkwriter.StreamSession;
 import org.apache.cassandra.spark.bulkwriter.TransportContext;
 import org.apache.cassandra.spark.bulkwriter.cloudstorage.coordinated.CoordinatedCloudStorageDataTransferApi;
 import org.apache.cassandra.spark.bulkwriter.token.ReplicaAwareFailureHandler;
+import org.apache.cassandra.spark.common.Digest;
+import org.apache.cassandra.spark.common.SSTables;
 import org.apache.cassandra.spark.data.QualifiedTableName;
 import org.apache.cassandra.spark.exception.ConsistencyNotSatisfiedException;
 import org.apache.cassandra.spark.exception.S3ApiCallException;
@@ -115,12 +119,15 @@ public class CloudStorageStreamSession extends StreamSession<TransportContext.Cl
         executorService.submit(() -> {
             try
             {
-                SortedSSTableWriter.PreparedSSTables preparedSSTables = sstableWriter.prepareSStablesToSend(writerContext, sstables);
-                sstablesBundler.includeFileDigests(preparedSSTables.digests());
+                Map<Path, Digest> fileDigests = sstableWriter.prepareSStablesToSend(writerContext, sstables);
+                sstablesBundler.includeFileDigests(fileDigests);
                 // sstablesBundler keeps track of the known files. No need to record the streamed files.
-                // add to bundler files grouped by base sstable name
-                preparedSSTables.sstables()
-                                .forEach(s -> sstablesBundler.includeSSTable(s.files()));
+                // group the files by sstable (unique) basename and add to bundler
+                fileDigests.keySet()
+                           .stream()
+                           .collect(Collectors.groupingBy(SSTables::getSSTableBaseName))
+                           .values()
+                           .forEach(sstablesBundler::includeSSTable);
 
                 if (!sstablesBundler.hasNext())
                 {

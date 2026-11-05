@@ -32,6 +32,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.SortedMap;
 import java.util.TreeMap;
@@ -59,6 +60,7 @@ import org.apache.cassandra.bridge.CassandraVersionFeatures;
 import org.apache.cassandra.bridge.SSTableDescriptor;
 import org.apache.cassandra.spark.bulkwriter.token.ConsistencyLevel;
 import org.apache.cassandra.spark.bulkwriter.token.TokenRangeMapping;
+import org.apache.cassandra.spark.common.Digest;
 import org.apache.cassandra.spark.data.CqlTable;
 import org.apache.cassandra.spark.data.FileSystemSSTable;
 import org.apache.cassandra.spark.data.ReplicationFactor;
@@ -136,17 +138,6 @@ public class SortedSSTableWriterTest
                 else
                 {
                     assertThat(baseFileName).matches("da-\\d+-bti");
-                }
-                break;
-            case 60:
-                // Format is "pa-<generation>-big" or "ea-<generation>-bti"
-                if ("big".equals(CassandraVersion.configuredSSTableFormat()))
-                {
-                    assertThat(baseFileName).matches("pa-\\d+-big");
-                }
-                else
-                {
-                    assertThat(baseFileName).matches("ea-\\d+-bti");
                 }
                 break;
             default:
@@ -434,13 +425,13 @@ public class SortedSSTableWriterTest
         writer.addRow(BigInteger.valueOf(100), ImmutableMap.of("id", 2, "date", 2, "course", "test2", "marks", 200));
 
         // Call prepareSStablesToSend with the existing SSTables
-        SortedSSTableWriter.PreparedSSTables processedFiles = writer.prepareSStablesToSend(writerContext, new HashSet<>(existingSSTables));
-        assertThat(processedFiles.sstables()).as("Should have processed existing SSTables").isNotEmpty();
+        Map<Path, Digest> processedFiles = writer.prepareSStablesToSend(writerContext, new HashSet<>(existingSSTables));
+        assertThat(processedFiles).as("Should have processed existing SSTables").isNotEmpty();
 
         long bytesAfterPrepare = writer.bytesWritten();
 
         // Delete the files that were processed (simulating DirectStreamSession behavior)
-        for (Path path : processedFiles.files())
+        for (Path path : processedFiles.keySet())
         {
             Files.deleteIfExists(path);
         }
@@ -483,10 +474,10 @@ public class SortedSSTableWriterTest
         int fileDigestCountAfterClose = writer.fileDigestMap().size();
 
         // Try to call prepareSStablesToSend after close - it should return empty map
-        SortedSSTableWriter.PreparedSSTables result = writer.prepareSStablesToSend(writerContext, new HashSet<>());
+        Map<Path, Digest> result = writer.prepareSStablesToSend(writerContext, new HashSet<>());
 
         // Verify it returned an empty map
-        assertThat(result.sstables())
+        assertThat(result)
         .as("prepareSStablesToSend should return empty map when called after close")
         .isEmpty();
 

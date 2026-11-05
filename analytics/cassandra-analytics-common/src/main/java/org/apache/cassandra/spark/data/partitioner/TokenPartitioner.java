@@ -31,7 +31,6 @@ import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
 import java.util.stream.Collectors;
 
 import com.google.common.base.Preconditions;
@@ -207,15 +206,14 @@ public class TokenPartitioner implements Serializable
     private void validateCompleteRangeCoverage()
     {
         RangeSet<BigInteger> missingRangeSet = TreeRangeSet.create();
-        // The ring must be open-closed, matching the sub-ranges it is compared against; a closed lower bound would
-        // report minToken as a spurious gap, because open-closed sub-ranges never cover their own lower endpoint
-        missingRangeSet.add(Range.openClosed(ring.partitioner().minToken(),
-                                             ring.partitioner().maxToken()));
+        missingRangeSet.add(Range.closed(ring.partitioner().minToken(),
+                                         ring.partitioner().maxToken()));
 
         partitionMap.asMapOfRanges().keySet().forEach(missingRangeSet::remove);
 
-        // Whatever is left is a real gap: TreeRangeSet never retains empty ranges
-        Set<Range<BigInteger>> missingRanges = missingRangeSet.asRanges();
+        List<Range<BigInteger>> missingRanges = missingRangeSet.asRanges().stream()
+                                                                          .filter(Range::isEmpty)
+                                                                          .collect(Collectors.toList());
         Preconditions.checkState(missingRanges.isEmpty(),
                                  "There should be no missing ranges, but found " + missingRanges.toString());
     }

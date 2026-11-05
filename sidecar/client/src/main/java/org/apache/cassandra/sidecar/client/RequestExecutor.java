@@ -372,9 +372,6 @@ public class RequestExecutor implements AutoCloseable
         {
             singleThreadExecutorService.schedule(runnable, delayMillis, TimeUnit.MILLISECONDS);
         }
-        else
-        {
-            runnable.run();
-        }
+        runnable.run();
     }
 }

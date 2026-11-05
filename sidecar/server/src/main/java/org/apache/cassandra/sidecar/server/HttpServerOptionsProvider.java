@@ -55,7 +55,7 @@ public class HttpServerOptionsProvider implements Function<SidecarConfiguration,
     @Override
     public HttpServerOptions apply(SidecarConfiguration configuration)
     {
-        HttpServerOptions options = new HttpServerOptions();
+        HttpServerOptions options = new HttpServerOptions().setLogActivity(true);
         ServiceConfiguration serviceConf = configuration.serviceConfiguration();
         options.setIdleTimeoutUnit(MILLISECONDS)
                .setIdleTimeout(serviceConf.requestIdleTimeout().toIntMillis())

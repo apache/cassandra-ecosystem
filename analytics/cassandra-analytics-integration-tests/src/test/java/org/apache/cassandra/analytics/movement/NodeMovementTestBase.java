@@ -77,9 +77,8 @@ abstract class NodeMovementTestBase extends ResiliencyTestBase
     }
 
     @Override
-    protected void afterSchemaInitialized()
+    protected void afterClusterProvisioned()
     {
-        prepareTopologyChange();
         ClusterBuilderConfiguration configuration = testClusterConfiguration();
         int movingNodeIndex = configuration.dcCount > 1 ? MULTI_DC_MOVING_NODE_IDX : SINGLE_DC_MOVING_NODE_IDX;
         movingNode = cluster.get(movingNodeIndex);

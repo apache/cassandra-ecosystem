@@ -37,7 +37,6 @@ import com.esotericsoftware.kryo.io.Input;
 public abstract class CassandraTypes
 {
     public static final Pattern COLLECTION_PATTERN = Pattern.compile("^(set|list|map|tuple)<(.+)>$", Pattern.CASE_INSENSITIVE);
-    public static final Pattern VECTOR_PATTERN = Pattern.compile("^(vector)<(.+),(.+)>$", Pattern.CASE_INSENSITIVE);
     public static final Pattern FROZEN_PATTERN = Pattern.compile("^frozen<(.*)>$", Pattern.CASE_INSENSITIVE);
 
     private final UDTs udts = new UDTs();
@@ -134,8 +133,6 @@ public abstract class CassandraTypes
 
     public abstract CqlField.CqlList list(CqlField.CqlType type);
 
-    public abstract CqlField.CqlVector vector(CqlField.CqlType type, int dimensions);
-
     public abstract CqlField.CqlSet set(CqlField.CqlType type);
 
     public abstract CqlField.CqlMap map(CqlField.CqlType keyType, CqlField.CqlType valueType);
@@ -191,14 +188,6 @@ public abstract class CassandraTypes
             return collection(collectionMatcher.group(1), Stream.of(types)
                                                                 .map(collectionType -> parseType(collectionType, udts))
                                                                 .toArray(CqlField.CqlType[]::new));
-        }
-        Matcher vectorMatcher = VECTOR_PATTERN.matcher(type);
-        if (vectorMatcher.find())
-        {
-            // CQL vector
-            String subType = vectorMatcher.group(2);
-            int dimensions = Integer.parseInt(vectorMatcher.group(3).trim());
-            return vector(parseType(subType, udts), dimensions);
         }
         Matcher frozenMatcher = FROZEN_PATTERN.matcher(type);
         if (frozenMatcher.find())

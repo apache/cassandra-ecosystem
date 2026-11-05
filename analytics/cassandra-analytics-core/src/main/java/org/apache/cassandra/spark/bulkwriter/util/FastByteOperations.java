@@ -28,6 +28,7 @@ import java.security.PrivilegedAction;
 
 import com.google.common.primitives.Longs;
 import com.google.common.primitives.UnsignedBytes;
+import com.google.common.primitives.UnsignedLongs;
 
 import sun.misc.Unsafe;  // CHECKSTYLE IGNORE: Used with care to speed byte operations up
 
@@ -81,15 +82,7 @@ public final class FastByteOperations
         static ByteOperations getBest()
         {
             String arch = System.getProperty("os.arch");
-            // Note that s390x, aarch64, & ppc64le architectures are not officially supported and adding them here is only done out
-            // of convenience for those that want to run C* on these architectures at their own risk (see #11214, #13326, & #13615)
-            boolean unaligned = arch.equals("i386")
-                                || arch.equals("x86")
-                                || arch.equals("x86_64")
-                                || arch.equals("amd64")
-                                || arch.equals("s390x")
-                                || arch.equals("aarch64")
-                                || arch.equals("ppc64le");
+            boolean unaligned = arch.equals("i386") || arch.equals("x86") || arch.equals("x86_64") || arch.equals("amd64");
             if (!unaligned)
             {
                 return new PureJavaOperations();
@@ -112,55 +105,43 @@ public final class FastByteOperations
 
     }
 
-    @SuppressWarnings("unused") // used via reflection
     public static final class UnsafeOperations implements ByteOperations
     {
-        static final Unsafe theUnsafe;
+        static final Unsafe UNSAFE;
         /**
-         * The offset to the first element in a byte array.
+         * The offset to the first element in a byte array
          */
         static final long BYTE_ARRAY_BASE_OFFSET;
         static final long DIRECT_BUFFER_ADDRESS_OFFSET;
 
         static
         {
-            theUnsafe = (Unsafe) AccessController.doPrivileged(
-                      new PrivilegedAction<Object>()
-                      {
-                          @Override
-                          public Object run()
-                          {
-                              try
-                              {
-                                  Field f = Unsafe.class.getDeclaredField("theUnsafe");
-                                  f.setAccessible(true);
-                                  return f.get(null);
-                              }
-                              catch (NoSuchFieldException e)
-                              {
-                                  // It doesn't matter what we throw;
-                                  // it's swallowed in getBest().
-                                  throw new Error();
-                              }
-                              catch (IllegalAccessException e)
-                              {
-                                  throw new Error();
-                              }
-                          }
-                      });
+            UNSAFE = (Unsafe) AccessController.doPrivileged((PrivilegedAction<Object>) () -> {
+                try
+                {
+                    Field field = Unsafe.class.getDeclaredField("UNSAFE");
+                    field.setAccessible(true);
+                    return field.get(null);
+                }
+                catch (NoSuchFieldException | IllegalAccessException exception)
+                {
+                    // It doesn't matter what we throw; it's swallowed in getBest()
+                    throw new Error();
+                }
+            });
 
             try
             {
-                BYTE_ARRAY_BASE_OFFSET = theUnsafe.arrayBaseOffset(byte[].class);
-                DIRECT_BUFFER_ADDRESS_OFFSET = theUnsafe.objectFieldOffset(Buffer.class.getDeclaredField("address"));
+                BYTE_ARRAY_BASE_OFFSET = UNSAFE.arrayBaseOffset(byte[].class);
+                DIRECT_BUFFER_ADDRESS_OFFSET = UNSAFE.objectFieldOffset(Buffer.class.getDeclaredField("address"));
             }
-            catch (Exception e)
+            catch (Exception exception)
             {
-                throw new AssertionError(e);
+                throw new AssertionError(exception);
             }
 
-            // sanity check - this should never fail
-            if (theUnsafe.arrayIndexScale(byte[].class) != 1)
+            // Sanity check - this should never fail
+            if (UNSAFE.arrayIndexScale(byte[].class) != 1)
             {
                 throw new AssertionError();
             }
@@ -173,62 +154,63 @@ public final class FastByteOperations
             return compareTo(buffer1, buffer2);
         }
 
-        public static int compareTo(ByteBuffer buffer1, ByteBuffer buffer2)
+        static int compareTo(ByteBuffer buffer1, ByteBuffer buffer2)
         {
-            Object obj1;
+            Object object1;
             long offset1;
             int length1;
             if (buffer1.hasArray())
             {
-                obj1 = buffer1.array();
+                object1 = buffer1.array();
                 offset1 = BYTE_ARRAY_BASE_OFFSET + buffer1.arrayOffset();
             }
             else
             {
-                obj1 = null;
-                offset1 = theUnsafe.getLong(buffer1, DIRECT_BUFFER_ADDRESS_OFFSET);
+                object1 = null;
+                offset1 = UNSAFE.getLong(buffer1, DIRECT_BUFFER_ADDRESS_OFFSET);
             }
             offset1 += buffer1.position();
             length1 = buffer1.remaining();
-            return compareTo(obj1, offset1, length1, buffer2);
+            return compareTo(object1, offset1, length1, buffer2);
         }
 
-        public static int compareTo(Object buffer1, long offset1, int length1, ByteBuffer buffer)
+        static int compareTo(Object buffer1, long offset1, int length1, ByteBuffer buffer2)
         {
-            Object obj2;
+            Object object2;
             long offset2;
 
-            int position = buffer.position();
-            int limit = buffer.limit();
-            if (buffer.hasArray())
+            int position = buffer2.position();
+            int limit = buffer2.limit();
+            if (buffer2.hasArray())
             {
-                obj2 = buffer.array();
-                offset2 = BYTE_ARRAY_BASE_OFFSET + buffer.arrayOffset();
+                object2 = buffer2.array();
+                offset2 = BYTE_ARRAY_BASE_OFFSET + buffer2.arrayOffset();
             }
             else
             {
-                obj2 = null;
-                offset2 = theUnsafe.getLong(buffer, DIRECT_BUFFER_ADDRESS_OFFSET);
+                object2 = null;
+                offset2 = UNSAFE.getLong(buffer2, DIRECT_BUFFER_ADDRESS_OFFSET);
             }
             int length2 = limit - position;
             offset2 += position;
 
-            return compareTo(buffer1, offset1, length1, obj2, offset2, length2);
+            return compareTo(buffer1, offset1, length1, object2, offset2, length2);
         }
 
         /**
-         * Lexicographically compare two arrays.
+         * Lexicographically compare two arrays
          *
          * @param buffer1 left operand: a byte[] or null
          * @param buffer2 right operand: a byte[] or null
-         * @param memoryOffset1 Where to start comparing in the left buffer (pure memory address if buffer1 is null, or relative otherwise)
-         * @param memoryOffset2 Where to start comparing in the right buffer (pure memory address if buffer1 is null, or relative otherwise)
+         * @param offset1 Where to start comparing in the left buffer
+         *                (pure memory address if buffer1 is null, or relative otherwise)
+         * @param offset2 Where to start comparing in the right buffer
+         *                (pure memory address if buffer1 is null, or relative otherwise)
          * @param length1 How much to compare from the left buffer
          * @param length2 How much to compare from the right buffer
-         * @return 0 if equal, {@code < 0} if left is less than right, etc.
+         * @return 0 if equal, < 0 if left is less than right, etc.
          */
-        public static int compareTo(Object buffer1, long memoryOffset1, int length1,
-                             Object buffer2, long memoryOffset2, int length2)
+        static int compareTo(Object buffer1, long offset1, int length1, Object buffer2, long offset2, int length2)
         {
             int minLength = Math.min(length1, length2);
 
@@ -238,29 +220,25 @@ public final class FastByteOperations
              * On the other hand, it is substantially faster on 64-bit.
              */
             int wordComparisons = minLength & ~7;
-            for (int i = 0; i < wordComparisons; i += Longs.BYTES)
+            for (int index = 0; index < wordComparisons; index += Longs.BYTES)
             {
-                long lw = theUnsafe.getLong(buffer1, memoryOffset1 + i);
-                long rw = theUnsafe.getLong(buffer2, memoryOffset2 + i);
+                long long1 = UNSAFE.getLong(buffer1, offset1 + index);
+                long long2 = UNSAFE.getLong(buffer2, offset2 + index);
 
-                if (lw != rw)
+                if (long1 != long2)
                 {
-                    if (BIG_ENDIAN)
-                    {
-                        return Long.compareUnsigned(lw, rw);
-                    }
-
-                    return Long.compareUnsigned(Long.reverseBytes(lw), Long.reverseBytes(rw));
+                    return BIG_ENDIAN ? UnsignedLongs.compare(long1, long2)
+                                      : UnsignedLongs.compare(Long.reverseBytes(long1), Long.reverseBytes(long2));
                 }
             }
 
-            for (int i = wordComparisons; i < minLength; i++)
+            for (int index = wordComparisons; index < minLength; index++)
             {
-                int b1 = theUnsafe.getByte(buffer1, memoryOffset1 + i) & 0xFF;
-                int b2 = theUnsafe.getByte(buffer2, memoryOffset2 + i) & 0xFF;
-                if (b1 != b2)
+                int byte1 = UNSAFE.getByte(buffer1, offset1 + index) & 0xFF;
+                int byte2 = UNSAFE.getByte(buffer2, offset2 + index) & 0xFF;
+                if (byte1 != byte2)
                 {
-                    return b1 - b2;
+                    return byte1 - byte2;
                 }
             }
 
@@ -268,20 +246,19 @@ public final class FastByteOperations
         }
     }
 
-    @SuppressWarnings("unused")
     public static final class PureJavaOperations implements ByteOperations
     {
         public int compare(ByteBuffer buffer1, ByteBuffer buffer2)
         {
             int end1 = buffer1.limit();
             int end2 = buffer2.limit();
-            for (int i = buffer1.position(), j = buffer2.position(); i < end1 && j < end2; i++, j++)
+            for (int index1 = buffer1.position(), index2 = buffer2.position(); index1 < end1 && index2 < end2; index1++, index2++)
             {
-                int a = buffer1.get(i) & 0xff;
-                int b = buffer2.get(j) & 0xff;
-                if (a != b)
+                int byte1 = buffer1.get(index1) & 0xFF;
+                int byte2 = buffer2.get(index2) & 0xFF;
+                if (byte1 != byte2)
                 {
-                    return a - b;
+                    return byte1 - byte2;
                 }
             }
             return buffer1.remaining() - buffer2.remaining();

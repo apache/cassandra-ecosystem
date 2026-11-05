@@ -190,7 +190,6 @@ public abstract class SharedClusterIntegrationTestBase
         assertThat(cluster).isNotNull();
         afterClusterProvisioned();
         initializeSchemaForTest();
-        afterSchemaInitialized();
         mtlsTestHelper = new MtlsTestHelper(secretsPath);
         startSidecar(cluster);
         beforeTestStart();
@@ -251,13 +250,6 @@ public abstract class SharedClusterIntegrationTestBase
     {
         try
         {
-            // An assumption in beforeClusterProvisioning() aborts setup() before it provisions the cluster, and
-            // every hook below would then throw a NullPointerException
-            if (cluster == null)
-            {
-                logger.info("Skipping tear down; the cluster was never provisioned");
-                return;
-            }
             beforeSidecarStop();
             stopSidecar();
             beforeClusterShutdown();
@@ -309,13 +301,6 @@ public abstract class SharedClusterIntegrationTestBase
      * Initialize required schemas for the tests upfront before the test starts
      */
     protected abstract void initializeSchemaForTest();
-
-    /**
-     * Runs after schema creation, before Sidecar starts.
-     */
-    protected void afterSchemaInitialized()
-    {
-    }
 
     /**
      * Override to perform an action before the tests start
@@ -519,17 +504,6 @@ public abstract class SharedClusterIntegrationTestBase
     }
 
     /**
-     * Convenience method to count rows from the provided {@code table} at consistency level ALL.
-     *
-     * @param table the qualified Cassandra table name
-     * @return all the data queried from the table
-     */
-    protected Long countDataWithDriver(QualifiedName table)
-    {
-        return countDataWithDriver(table, ConsistencyLevel.ALL);
-    }
-
-    /**
      * Convenience method to query all data from the provided {@code table} at the specified consistency level.
      *
      * @param table       the qualified Cassandra table name
@@ -538,31 +512,11 @@ public abstract class SharedClusterIntegrationTestBase
      */
     protected ResultSet queryAllDataWithDriver(QualifiedName table, ConsistencyLevel consistency)
     {
-        try (Cluster driverCluster = createDriverCluster(cluster.delegate());
-             Session session = driverCluster.connect())
-        {
-            SimpleStatement statement = new SimpleStatement(String.format("SELECT * FROM %s;", table));
-            statement.setConsistencyLevel(com.datastax.driver.core.ConsistencyLevel.valueOf(consistency.name()));
-            return session.execute(statement);
-        }
-    }
-
-    /**
-     * Convenience method to count rows from the provided {@code table} at the specified consistency level.
-     *
-     * @param table       the qualified Cassandra table name
-     * @param consistency the consistency level to use for querying the data
-     * @return record count
-     */
-    protected Long countDataWithDriver(QualifiedName table, ConsistencyLevel consistency)
-    {
-        try (Cluster driverCluster = createDriverCluster(cluster.delegate());
-             Session session = driverCluster.connect())
-        {
-            SimpleStatement statement = new SimpleStatement(String.format("SELECT COUNT(*) FROM %s;", table));
-            statement.setConsistencyLevel(com.datastax.driver.core.ConsistencyLevel.valueOf(consistency.name()));
-            return session.execute(statement).one().getLong(0);
-        }
+        Cluster driverCluster = createDriverCluster(cluster.delegate());
+        Session session = driverCluster.connect();
+        SimpleStatement statement = new SimpleStatement(String.format("SELECT * FROM %s;", table));
+        statement.setConsistencyLevel(com.datastax.driver.core.ConsistencyLevel.valueOf(consistency.name()));
+        return session.execute(statement);
     }
 
     // Utility methods

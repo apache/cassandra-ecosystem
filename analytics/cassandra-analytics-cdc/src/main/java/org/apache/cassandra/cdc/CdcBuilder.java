@@ -31,6 +31,7 @@ import org.apache.cassandra.cdc.api.SchemaSupplier;
 import org.apache.cassandra.cdc.api.StatePersister;
 import org.apache.cassandra.cdc.api.TableIdLookup;
 import org.apache.cassandra.cdc.api.TokenRangeSupplier;
+import org.apache.cassandra.cdc.stats.CdcStats;
 import org.apache.cassandra.cdc.stats.ICdcStats;
 import org.apache.cassandra.spark.utils.AsyncExecutor;
 import org.jetbrains.annotations.NotNull;
@@ -130,7 +131,7 @@ public class CdcBuilder
         return this;
     }
 
-    public CdcBuilder withStats(@NotNull ICdcStats stats)
+    public CdcBuilder withStats(@NotNull CdcStats stats)
     {
         this.stats = stats;
         return this;

@@ -87,7 +87,6 @@ public class RestoreJobDatabaseAccessor extends DatabaseAccessor<RestoreJobsSche
                                    .consistencyLevel(payload.consistencyConfig().consistencyLevel)
                                    .localDatacenter(payload.consistencyConfig().localDatacenter)
                                    .shouldRestoreToLocalDatacenterOnly(payload.shouldRestoreToLocalDatacenterOnly())
-                                   .fastForwardEnabled(payload.fastForwardEnabled())
                                    .build();
         ByteBuffer secrets = serializeValue(job.secrets, "secrets");
         ByteBuffer importOptions = serializeValue(job.importOptions, "sstable import options");
@@ -104,7 +103,6 @@ public class RestoreJobDatabaseAccessor extends DatabaseAccessor<RestoreJobsSche
                                                     job.localDatacenter,
                                                     job.shouldRestoreToLocalDatacenterOnly,
                                                     job.credentialType.name(),
-                                                    job.fastForwardEnabled,
                                                     job.expireAt);
 
         execute(statement);
@@ -210,20 +208,6 @@ public class RestoreJobDatabaseAccessor extends DatabaseAccessor<RestoreJobsSche
         }
         BoundStatement statement = tableSchema.updateStatus()
                                               .bind(createdAt, jobId, status);
-        execute(statement);
-    }
-
-    /**
-     * Remove the stored secrets of the restore job.
-     *
-     * @param jobId id of the restore job
-     */
-    public void removeSecrets(UUID jobId)
-    {
-        sidecarSchema.ensureInitialized();
-
-        BoundStatement statement = tableSchema.updateBlobSecrets()
-                                              .bind(RestoreJob.toLocalDate(jobId), jobId, null);
         execute(statement);
     }
 

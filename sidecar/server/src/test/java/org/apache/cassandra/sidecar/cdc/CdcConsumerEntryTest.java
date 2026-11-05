@@ -21,7 +21,6 @@ package org.apache.cassandra.sidecar.cdc;
 import org.junit.jupiter.api.Test;
 
 import org.apache.cassandra.cdc.sidecar.SidecarCdc;
-import org.apache.cassandra.cdc.sidecar.SidecarCdcStats;
 import org.apache.cassandra.cdc.sidecar.SidecarStatePersister;
 import org.mockito.InOrder;
 
@@ -33,36 +32,32 @@ import static org.mockito.Mockito.mock;
 public class CdcConsumerEntryTest
 {
     @Test
-    void startCallsPersisterBeforeConsumerThenCapturesConsumerStarted()
+    void startCallsPersisterBeforeConsumer()
     {
         SidecarCdc consumer = mock(SidecarCdc.class);
         SidecarStatePersister persister = mock(SidecarStatePersister.class);
-        SidecarCdcStats sidecarCdcStats = mock(SidecarCdcStats.class);
-        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister, sidecarCdcStats);
+        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister);
 
         entry.start();
 
-        InOrder order = inOrder(persister, consumer, sidecarCdcStats);
+        InOrder order = inOrder(persister, consumer);
         order.verify(persister).start();
         order.verify(consumer).initSchema();
         order.verify(consumer).start();
-        order.verify(sidecarCdcStats).captureCdcConsumerStarted();
     }
 
     @Test
-    void stopCallsConsumerBeforePersisterThenCapturesConsumerStopped()
+    void stopCallsConsumerBeforePersister()
     {
         SidecarCdc consumer = mock(SidecarCdc.class);
         SidecarStatePersister persister = mock(SidecarStatePersister.class);
-        SidecarCdcStats sidecarCdcStats = mock(SidecarCdcStats.class);
-        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister, sidecarCdcStats);
+        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister);
 
         entry.stop();
 
-        InOrder order = inOrder(consumer, persister, sidecarCdcStats);
+        InOrder order = inOrder(consumer, persister);
         order.verify(consumer).stop();
         order.verify(persister).stop(true);
-        order.verify(sidecarCdcStats).captureCdcConsumerStopped();
     }
 
     @Test
@@ -70,8 +65,7 @@ public class CdcConsumerEntryTest
     {
         SidecarCdc consumer = mock(SidecarCdc.class);
         SidecarStatePersister persister = mock(SidecarStatePersister.class);
-        SidecarCdcStats sidecarCdcStats = mock(SidecarCdcStats.class);
-        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister, sidecarCdcStats);
+        CdcConsumerEntry entry = new CdcConsumerEntry(consumer, persister);
 
         assertThat(entry.consumer()).isSameAs(consumer);
         assertThat(entry.persister()).isSameAs(persister);

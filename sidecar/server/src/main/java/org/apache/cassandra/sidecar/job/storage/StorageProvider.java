@@ -89,18 +89,17 @@ public interface StorageProvider extends Closeable
     // --- Active Operation Coordination ---
 
     /**
-     * Set an operation as active if no other operation of the same type is currently active
-     * in the local datacenter.
+     * Set an operation as active if no other operation of the same type is currently active.
      * <p>
      * Implementations must provide compare-and-set (CAS) semantics to ensure only one active
-     * operation of a given type runs at a time within the local datacenter. This lock is per operation
+     * operation of a given type runs at a time across the cluster. This lock is per operation
      * plan, not per node; within a single operation, multiple nodes may be operated on
      * concurrently as defined by the node execution order.
      *
      * @param operationType the operation type
      * @param operationId   the unique identifier for this operation
      * @return {@code true} if the operation was successfully set as active, {@code false} if
-     *         an operation of the same type is already active in the local datacenter
+     *         an operation of the same type is already active (including the same operation ID)
      */
     boolean trySetActiveOperation(OperationType operationType, UUID operationId);
 

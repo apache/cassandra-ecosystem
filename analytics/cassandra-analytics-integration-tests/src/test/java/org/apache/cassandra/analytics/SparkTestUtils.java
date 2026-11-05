@@ -256,13 +256,9 @@ public class SparkTestUtils
             cause = cause.getCause();
         }
 
-        if (cause == null)
-        {
-            throw new AssertionError("Expected a range write failure with " + writeCL, thrown);
-        }
-
-        assertThat(cause).hasMessageFindingMatch("Failed to write (\\d+) ranges with " + writeCL +
-                                                " for job ([a-zA-Z0-9-]+) in phase .*");
+        assertThat(cause).isNotNull()
+                         .hasMessageFindingMatch("Failed to write (\\d+) ranges with " + writeCL +
+                                                 " for job ([a-zA-Z0-9-]+) in phase .*");
     }
 
     /**

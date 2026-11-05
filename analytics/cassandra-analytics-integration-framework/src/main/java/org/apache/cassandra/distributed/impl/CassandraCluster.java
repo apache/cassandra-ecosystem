@@ -134,7 +134,7 @@ public class CassandraCluster<I extends IInstance> implements IClusterExtension<
         {
             instanceConfigUpdater = instanceConfigUpdater.andThen(config -> configuration.additionalInstanceConfig.forEach(config::set));
         }
-        clusterBuilder.withTokenSupplier(configuration.tokenSupplier == null ? tokenSupplier : configuration.tokenSupplier)
+        clusterBuilder.withTokenSupplier(tokenSupplier)
                       .withConfig(instanceConfigUpdater);
 
         if (dcCount > 1)
@@ -211,11 +211,6 @@ public class CassandraCluster<I extends IInstance> implements IClusterExtension<
     public IInstanceConfig newInstanceConfig()
     {
         return delegate.newInstanceConfig();
-    }
-
-    public IInstanceConfig createInstanceConfig(int i)
-    {
-        throw new UnsupportedOperationException();
     }
 
     @Override

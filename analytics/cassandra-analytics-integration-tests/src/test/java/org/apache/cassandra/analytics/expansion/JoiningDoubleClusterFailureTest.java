@@ -46,12 +46,6 @@ import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
 class JoiningDoubleClusterFailureTest extends JoiningSingleNodeTest
 {
     @Override
-    protected boolean requiresConcurrentTopologyChanges()
-    {
-        return true;
-    }
-
-    @Override
     protected void beforeClusterShutdown()
     {
         completeTransitionsAndValidateWrites(BBHelperDoubleClusterSizeFailure.transitionalStateEnd,

@@ -25,7 +25,6 @@ import org.apache.cassandra.cdc.CdcBuilder;
 import org.apache.cassandra.cdc.api.CdcOptions;
 import org.apache.cassandra.cdc.api.EventConsumer;
 import org.apache.cassandra.cdc.api.SchemaSupplier;
-import org.apache.cassandra.cdc.api.TableIdLookup;
 import org.apache.cassandra.cdc.api.TokenRangeSupplier;
 import org.apache.cassandra.cdc.stats.ICdcStats;
 import org.apache.cassandra.spark.utils.AsyncExecutor;
@@ -55,7 +54,6 @@ public class SidecarCdcBuilder extends CdcBuilder
         super(jobId, partitionId, eventConsumer, schemaSupplier);
         this.clusterConfigProvider = clusterConfigProvider;
         this.sidecarCdcClient = sidecarCdcClient;
-        withStats(cdcStats);
         withCdcOptions(cdcOptions);
         withTokenRangeSupplier(tokenRangeSupplier);
     }
@@ -102,13 +100,6 @@ public class SidecarCdcBuilder extends CdcBuilder
     {
         super.withExecutor(asyncExecutor);
         return withSidecarCdcCassandraClient(cassandraClient); // rebuild SidecarStatePersister with new AsyncExecutor
-    }
-
-    @Override
-    public SidecarCdcBuilder withTableIdLookup(@NotNull TableIdLookup tableIdLookup)
-    {
-        super.withTableIdLookup(tableIdLookup);
-        return this;
     }
 
     public SidecarCdcBuilder withSidecarCdcCassandraClient(SidecarCdcCassandraClient cassandraClient)

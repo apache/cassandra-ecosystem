@@ -67,19 +67,6 @@ configurations {
     fivezeroSparkSql {
         description = 'Cassandra 5.0 SparkSQL Converter'
     }
-
-    sixzero {
-        description = 'Cassandra 6.0 dependency'
-    }
-    sixzeroBridge {
-        description = 'Bridge to Cassandra 6.0'
-    }
-    sixzeroTypes {
-        description = 'Cassandra 6.0 Data Types'
-    }
-    sixzeroSparkSql {
-        description = 'Cassandra 6.0 SparkSQL Converter'
-    }
 }
 
 dependencies {
@@ -97,11 +84,6 @@ dependencies {
     fivezeroBridge(project(path: ':cassandra-five-zero-bridge'))
     fivezeroTypes(project(path: ':cassandra-five-zero-types'))
     fivezeroSparkSql(project(path: ':cassandra-analytics-spark-five-zero-converter'))
-
-    sixzero(project(path: ':cassandra-six-zero', configuration: 'shadow'))
-    sixzeroBridge(project(path: ':cassandra-six-zero-bridge'))
-    sixzeroTypes(project(path: ':cassandra-six-zero-types'))
-    sixzeroSparkSql(project(path: ':cassandra-analytics-spark-six-zero-converter'))
 
     api(project(':cassandra-analytics-spark-converter'))
 
@@ -157,11 +139,6 @@ jar {
     dependsOn(configurations.fivezeroSparkSql)
     dependsOn(configurations.fivezeroTypes)
 
-    dependsOn(configurations.sixzero)
-    dependsOn(configurations.sixzeroBridge)
-    dependsOn(configurations.sixzeroSparkSql)
-    dependsOn(configurations.sixzeroTypes)
-
     writeBuildVersion(version, project.projectDir)
 
     exclude('META-INF/*')
@@ -175,11 +152,6 @@ jar {
         from(configurations.fivezeroBridge.singleFile)
         from(configurations.fivezeroTypes.singleFile)
         from(configurations.fivezeroSparkSql.singleFile)
-
-        from(configurations.sixzero.singleFile)
-        from(configurations.sixzeroBridge.singleFile)
-        from(configurations.sixzeroTypes.singleFile)
-        from(configurations.sixzeroSparkSql.singleFile)
     }
 }
 

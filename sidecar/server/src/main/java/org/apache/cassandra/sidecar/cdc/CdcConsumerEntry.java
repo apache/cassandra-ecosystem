@@ -19,7 +19,6 @@
 package org.apache.cassandra.sidecar.cdc;
 
 import org.apache.cassandra.cdc.sidecar.SidecarCdc;
-import org.apache.cassandra.cdc.sidecar.SidecarCdcStats;
 import org.apache.cassandra.cdc.sidecar.SidecarStatePersister;
 
 /**
@@ -30,13 +29,11 @@ class CdcConsumerEntry
 {
     private final SidecarCdc consumer;
     private final SidecarStatePersister persister;
-    private final SidecarCdcStats sidecarCdcStats;
 
-    CdcConsumerEntry(SidecarCdc consumer, SidecarStatePersister persister, SidecarCdcStats sidecarCdcStats)
+    CdcConsumerEntry(SidecarCdc consumer, SidecarStatePersister persister)
     {
         this.consumer = consumer;
         this.persister = persister;
-        this.sidecarCdcStats = sidecarCdcStats;
     }
 
     SidecarCdc consumer()
@@ -54,13 +51,11 @@ class CdcConsumerEntry
         persister.start();
         consumer.initSchema();
         consumer.start();
-        sidecarCdcStats.captureCdcConsumerStarted();
     }
 
     void stop()
     {
         consumer.stop();           // blocking — waits for any active run() to complete
         persister.stop(true);      // flush buffered state to Cassandra, then cancel timer
-        sidecarCdcStats.captureCdcConsumerStopped();
     }
 }

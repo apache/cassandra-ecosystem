@@ -36,6 +36,7 @@ import com.google.inject.Singleton;
 import io.vertx.core.Future;
 import io.vertx.core.Promise;
 import org.apache.cassandra.sidecar.cluster.locator.LocalTokenRangesProvider;
+import org.apache.cassandra.sidecar.common.data.RestoreJobStatus;
 import org.apache.cassandra.sidecar.common.server.utils.DurationSpec;
 import org.apache.cassandra.sidecar.common.server.utils.SecondBoundConfiguration;
 import org.apache.cassandra.sidecar.concurrent.ConcurrencyLimiter;
@@ -167,9 +168,9 @@ public class RestoreProcessor implements PeriodicTask
                 break; // break in order to complete promise
             }
 
-            // only create task when the restore job is ready to import the staged ranges
+            // only create task when the restore job status is import ready for the staged ranges
             // otherwise, putting the range back to the staged queue and exit early.
-            if (range.hasStaged() && !range.job().shouldImportNow())
+            if (range.hasStaged() && range.job().status != RestoreJobStatus.IMPORT_READY)
             {
                 workQueue.offerStaged(range);
                 processMaxConcurrency.releasePermit();

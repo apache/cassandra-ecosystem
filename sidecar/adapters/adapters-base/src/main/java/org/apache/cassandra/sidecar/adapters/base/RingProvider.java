@@ -175,8 +175,7 @@ public class RingProvider
                 return NodeStatus.UP.displayName();
             if (deadNodes.contains(endpoint))
                 return NodeStatus.DOWN.displayName();
-            // Report "Unknown" rather than "?" so clients can parse the status as an enum value
-            return UNKNOWN;
+            return UNKNOWN_SHORT;
         }
     }
 

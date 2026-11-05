@@ -244,12 +244,9 @@ class SSTableUploadHandlerTest extends BaseUploadsHandlerTest
         when(mockSSTableUploadConfiguration.concurrentUploadsLimit()).thenReturn(0);
 
         UUID uploadId = UUID.randomUUID();
-        sendUploadRequestAndVerify(null, context, uploadId.toString(), "ks", "tbl", "without-md5-Dataa.db", null,
+        sendUploadRequestAndVerify(context, uploadId, "ks", "tbl", "without-md5-Dataa.db", null,
                                    Files.size(Paths.get(FILE_TO_BE_UPLOADED)),
-                                   HttpResponseStatus.TOO_MANY_REQUESTS.code(), false,
-                                   response -> assertThat(response.getHeader(HttpHeaderNames.RETRY_AFTER.toString()))
-                                              .isEqualTo("1"),
-                                   FILE_TO_BE_UPLOADED);
+                                   HttpResponseStatus.TOO_MANY_REQUESTS.code(), false);
     }
 
     @Test

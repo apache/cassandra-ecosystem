@@ -70,7 +70,6 @@ import org.apache.cassandra.spark.data.CqlType;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.apache.cassandra.spark.utils.AsyncExecutor;
 import org.apache.cassandra.spark.utils.ByteBufferUtils;
-import org.apache.cassandra.spark.utils.TableIdentifier;
 import org.apache.cassandra.spark.utils.TimeProvider;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -107,11 +106,6 @@ public abstract class AbstractCdcBridgeImplementation extends CdcBridge
     public void updateCdcSchema(@NotNull Set<CqlTable> cdcTables, @NotNull Partitioner partitioner, @NotNull TableIdLookup tableIdLookup)
     {
         CassandraSchema.updateCdcSchema(cdcTables, partitioner, tableIdLookup);
-    }
-
-    public void unregisterNonCdcTables(@NotNull Set<TableIdentifier> tables)
-    {
-        CassandraSchema.unregisterNonCdcTables(tables);
     }
 
     public CommitLogReader.Result readLog(@NotNull CommitLog log,

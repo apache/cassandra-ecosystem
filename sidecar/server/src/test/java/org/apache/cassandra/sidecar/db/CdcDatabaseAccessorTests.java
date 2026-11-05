@@ -44,9 +44,11 @@ import com.datastax.driver.core.Row;
 import com.datastax.driver.core.Session;
 import com.google.inject.Provider;
 import org.apache.cassandra.bridge.TokenRange;
+import org.apache.cassandra.sidecar.cluster.instance.InstanceMetadata;
 import org.apache.cassandra.sidecar.common.server.CQLSessionProvider;
 import org.apache.cassandra.sidecar.db.schema.CdcStatesSchema;
 import org.apache.cassandra.sidecar.db.schema.SidecarSchema;
+import org.apache.cassandra.sidecar.utils.InstanceMetadataFetcher;
 import org.apache.cassandra.sidecar.utils.TokenSplitUtil;
 import org.apache.cassandra.spark.data.partitioner.Partitioner;
 import org.jetbrains.annotations.NotNull;
@@ -55,6 +57,7 @@ import static org.apache.cassandra.sidecar.db.CdcDatabaseAccessor.await;
 import static org.apache.cassandra.sidecar.utils.TokenSplitUtil.overlaps;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.RETURNS_DEEP_STUBS;
 import static org.mockito.Mockito.mock;
@@ -142,7 +145,8 @@ class CdcDatabaseAccessorTests
 
         CdcDatabaseAccessor db = new CdcDatabaseAccessor(mockSidecarSchema,
                                                          getMockCQLSessionProvider(datastore, mockCdcStatesSchema),
-                                                         tokenSplitUtilProvider);
+                                                         tokenSplitUtilProvider,
+                                                         getMockInstanceMetaDataFetcher());
 
         ByteBuffer[] buffers = new ByteBuffer[tokensBeforeShrink.size()];
         for (int i = 0; i < tokensBeforeShrink.size(); i++)
@@ -191,7 +195,8 @@ class CdcDatabaseAccessorTests
 
         CdcDatabaseAccessor db = new CdcDatabaseAccessor(mockSidecarSchema,
                                                          getMockCQLSessionProvider(datastore, mockCdcStatesSchema),
-                                                         tokenSplitUtilProvider);
+                                                         tokenSplitUtilProvider,
+                                                         getMockInstanceMetaDataFetcher());
 
         ByteBuffer[] buffers = new ByteBuffer[tokensBeforeExpansion.size()];
         for (int i = 0; i < tokensBeforeExpansion.size(); i++)
@@ -389,6 +394,14 @@ class CdcDatabaseAccessorTests
         {
             return (T) args[i];
         }
+    }
+
+    private InstanceMetadataFetcher getMockInstanceMetaDataFetcher()
+    {
+        InstanceMetadata instanceMeta = mock(InstanceMetadata.class);
+        InstanceMetadataFetcher instanceMetadataFetcher = mock(InstanceMetadataFetcher.class);
+        when(instanceMetadataFetcher.instance(anyString())).thenReturn(instanceMeta);
+        return instanceMetadataFetcher;
     }
 
     CQLSessionProvider getMockCQLSessionProvider(MockCdcStateV2 datastore, CdcStatesSchema mockCdcStatesSchema)
